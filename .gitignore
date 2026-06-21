@@ -8,6 +8,7 @@ installer/payload/
 installer/*.7z
 installer/sfx-config.txt
 *.spec
+*.egg-info/
 __pycache__/
 *.py[cod]
 *.pyo

@@ -82,6 +82,7 @@ TEXT = {
         "output_file": "輸出檔案",
         "error": "錯誤",
         "cancelling": "正在取消...",
+        "cancelled": "下載已取消。",
         "copied_path": "已複製路徑",
         "file_missing_title": "找不到檔案",
         "file_missing": "檔案不存在",
@@ -142,6 +143,7 @@ TEXT = {
         "output_file": "Output file",
         "error": "Error",
         "cancelling": "Cancelling...",
+        "cancelled": "Download cancelled.",
         "copied_path": "Copied path",
         "file_missing_title": "File Missing",
         "file_missing": "File does not exist",
@@ -628,6 +630,7 @@ class MainWindow(QMainWindow):
         self.worker.status.connect(self.append_status)
         self.worker.finished_ok.connect(lambda results: self.download_finished(results, info, url))
         self.worker.failed.connect(self.download_failed)
+        self.worker.finished.connect(lambda worker=self.worker: self.cleanup_worker(worker))
         self.worker.start()
 
     def video_info_for_start(self, url: str, output_dir: Path) -> VideoInfo | None:
@@ -682,6 +685,7 @@ class MainWindow(QMainWindow):
     def cancel_download(self) -> None:
         if self.worker:
             self.append_status(self.t("cancelling"))
+            self.cancel_button.setEnabled(False)
             self.worker.cancel()
 
     def download_finished(self, results: list[tuple[str, str, bool]], info: VideoInfo, url: str) -> None:
@@ -703,16 +707,25 @@ class MainWindow(QMainWindow):
 
         self.add_history(info, url, paths)
         self.set_running(False)
-        self.worker = None
 
         if self.notify_checkbox.isChecked():
             QApplication.beep()
             QMessageBox.information(self, self.t("download_completed"), self.t("download_completed_msg"))
 
     def download_failed(self, message: str) -> None:
+        if "cancelled" in message.lower() or "canceled" in message.lower():
+            self.append_status(self.t("cancelled"))
+            self.progress_label.setText(self.t("cancelled"))
+            self.set_running(False)
+            return
+
         self.append_status(f"{self.t('error')}: {friendly_error(message, self.language)}")
         self.set_running(False)
-        self.worker = None
+
+    def cleanup_worker(self, worker: DownloadWorker) -> None:
+        if self.worker is worker:
+            self.worker = None
+        worker.deleteLater()
 
     def add_history(self, info: VideoInfo, url: str, paths: list[str]) -> None:
         items = load_history()
@@ -845,6 +858,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("window_size", self.size())
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self.worker and self.worker.isRunning():
+            self.cancel_download()
+            event.ignore()
+            return
         self.save_settings()
         super().closeEvent(event)
 
