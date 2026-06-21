@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+PROJECT_SRC = Path(__file__).resolve().parents[1] / "src"
+sys.path.insert(0, str(PROJECT_SRC))
+
+from ytsimpledownloader.downloader import SingleVideoDownloader
+from ytsimpledownloader.paths import DEFAULT_DOWNLOAD_DIR, ensure_default_dirs
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Smoke test a single YouTube URL download.")
+    parser.add_argument("url", help="Single public YouTube video URL")
+    parser.add_argument("--mode", choices=["mp3", "mp4", "both"], default="mp3")
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_DOWNLOAD_DIR)
+    parser.add_argument("--test-seconds", type=int, help="Download only the first N seconds for a faster smoke test.")
+    parser.add_argument("--mp3-quality", choices=["128", "192", "256", "320"], default="192")
+    parser.add_argument("--mp4-quality", choices=["best", "1080", "720", "480"], default="best")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    ensure_default_dirs()
+
+    downloader = SingleVideoDownloader(
+        args.output_dir,
+        progress_callback=print,
+        test_seconds=args.test_seconds,
+        mp3_quality=args.mp3_quality,
+        mp4_quality=args.mp4_quality,
+    )
+    results = downloader.download(args.url, args.mode)
+
+    print()
+    print("Output files:")
+    for result in results:
+        exists = "exists" if result.path.exists() else "missing"
+        print(f"- {result.mode.upper()}: {result.path} [{exists}]")
+
+    missing = [result.path for result in results if not result.path.exists()]
+    return 1 if missing else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

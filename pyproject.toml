@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-simple-downloader"
+version = "0.1.0"
+description = "Simple single-video YouTube MP3/MP4 downloader."
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6==6.10.1",
+    "yt-dlp==2026.6.9",
+    "imageio-ffmpeg==0.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

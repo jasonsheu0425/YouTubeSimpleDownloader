@@ -1,0 +1,17 @@
+.venv/
+build/
+dist/
+downloads/
+ffmpeg/
+release/
+installer/payload/
+installer/*.7z
+installer/sfx-config.txt
+*.spec
+__pycache__/
+*.py[cod]
+*.pyo
+*.log
+history.json
+.DS_Store
+Thumbs.db

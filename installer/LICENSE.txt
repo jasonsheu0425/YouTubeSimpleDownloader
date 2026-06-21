@@ -1,0 +1,10 @@
+﻿YouTube Simple Downloader
+
+This is a small personal utility for downloading single public YouTube video URLs as MP3, MP4, or both.
+
+First version limitations:
+- Single public video URLs only.
+- No playlist support.
+- No batch download support.
+- No login or cookie support.
+- Use only for videos you have the right to save.
