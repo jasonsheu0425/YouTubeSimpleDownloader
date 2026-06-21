@@ -6,6 +6,7 @@ Download public YouTube video URLs or playlist URLs as MP3, MP4, or both.
 
 - Single public YouTube video URL, or multiple video URLs pasted one per line.
 - Public or unlisted YouTube playlist URLs that do not require login.
+- Playlist repeat runs can skip videos that already exist in the local download history, so the app only downloads newly added videos.
 - Preview title, channel, duration, thumbnail, and expected MP3/MP4 paths before download when a single URL is entered.
 - Batch mode downloads multiple URLs sequentially and continues after individual URL failures.
 - Playlist mode expands videos into the batch queue before downloading.

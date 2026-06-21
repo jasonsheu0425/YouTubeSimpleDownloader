@@ -11,6 +11,12 @@ from ytsimpledownloader.downloader import SingleVideoDownloader, is_playlist_url
 from ytsimpledownloader.paths import DEFAULT_DOWNLOAD_DIR, ensure_default_dirs
 
 
+def safe_print(message: object = "") -> None:
+    text = str(message)
+    encoding = sys.stdout.encoding or "utf-8"
+    print(text.encode(encoding, errors="replace").decode(encoding))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Smoke test one or more YouTube URL downloads.")
     parser.add_argument("urls", nargs="+", help="One or more public YouTube video URLs")
@@ -28,7 +34,7 @@ def main() -> int:
 
     downloader = SingleVideoDownloader(
         args.output_dir,
-        progress_callback=print,
+        progress_callback=safe_print,
         test_seconds=args.test_seconds,
         mp3_quality=args.mp3_quality,
         mp4_quality=args.mp4_quality,
@@ -38,40 +44,40 @@ def main() -> int:
     expanded_urls = []
     for url in args.urls:
         if is_playlist_url(url):
-            print(f"Reading playlist: {url}")
+            safe_print(f"Reading playlist: {url}")
             try:
                 playlist = downloader.fetch_playlist_info(url)
             except Exception as exc:
                 failures.append((url, exc))
-                print(f"Failed: {url}")
-                print(exc)
+                safe_print(f"Failed: {url}")
+                safe_print(exc)
             else:
-                print(f"Playlist loaded: {playlist.title} ({len(playlist.urls)} videos)")
+                safe_print(f"Playlist loaded: {playlist.title} ({len(playlist.urls)} videos)")
                 expanded_urls.extend(playlist.urls)
         else:
             expanded_urls.append(url)
 
     for index, url in enumerate(expanded_urls, start=1):
-        print(f"Downloading {index}/{len(expanded_urls)}: {url}")
+        safe_print(f"Downloading {index}/{len(expanded_urls)}: {url}")
         try:
             all_results.extend(downloader.download(url, args.mode))
         except Exception as exc:
             failures.append((url, exc))
-            print(f"Failed: {url}")
-            print(exc)
+            safe_print(f"Failed: {url}")
+            safe_print(exc)
 
-    print()
-    print("Output files:")
+    safe_print()
+    safe_print("Output files:")
     for result in all_results:
         exists = "exists" if result.path.exists() else "missing"
-        print(f"- {result.mode.upper()}: {result.path} [{exists}]")
+        safe_print(f"- {result.mode.upper()}: {result.path} [{exists}]")
 
     missing = [result.path for result in all_results if not result.path.exists()]
     if failures:
-        print()
-        print("Failures:")
+        safe_print()
+        safe_print("Failures:")
         for url, exc in failures:
-            print(f"- {url}: {exc}")
+            safe_print(f"- {url}: {exc}")
     return 1 if missing or failures else 0
 
 

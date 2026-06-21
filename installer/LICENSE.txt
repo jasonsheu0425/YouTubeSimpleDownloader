@@ -1,6 +1,6 @@
 ﻿YouTube Simple Downloader
 
-This is a small personal utility for downloading one or more public YouTube video URLs as MP3, MP4, or both.
+This is a small personal utility for downloading public YouTube video or playlist URLs as MP3, MP4, or both.
 
 Current limitations:
 - Public video and playlist URLs only.

@@ -1,8 +1,14 @@
-# YouTube Simple Downloader v0.3.0
+# YouTube Simple Downloader v0.4.0
 
-Feature release adding YouTube playlist URL support.
+Feature release adding playlist update support.
 
 ## Features
+
+- Added a "skip previously downloaded videos" option, enabled by default.
+- Playlist repeat runs now compare video IDs against local download history and only download missing MP3/MP4 formats.
+- If a video already has MP3 but not MP4, MP3 + MP4 mode only downloads the missing MP4.
+
+## v0.3.0 Features
 
 - Added playlist URL support for public or unlisted YouTube playlists that do not require login.
 - Playlist URLs are expanded into individual video downloads and processed through the existing batch queue.

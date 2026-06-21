@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .downloader import DownloadCancelled, SingleVideoDownloader, VideoInfo, is_playlist_url
+from .downloader import DownloadCancelled, SingleVideoDownloader, VideoInfo, extract_video_id, is_playlist_url
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 
 
@@ -90,6 +90,9 @@ TEXT = {
         "fetching_playlist": "正在讀取播放清單：{url}",
         "playlist_loaded": "播放清單「{title}」已載入，共 {count} 部影片。",
         "playlist_empty": "播放清單沒有可下載的公開影片。",
+        "skip_downloaded": "略過已下載過的影片",
+        "skip_downloaded_status": "已略過下載紀錄中存在的影片：{url}",
+        "playlist_skip_summary": "播放清單檢查完成：略過 {skipped} 個已下載項目。",
         "error": "錯誤",
         "cancelling": "正在取消...",
         "cancelled": "下載已取消。",
@@ -161,6 +164,9 @@ TEXT = {
         "fetching_playlist": "Reading playlist: {url}",
         "playlist_loaded": "Playlist \"{title}\" loaded with {count} videos.",
         "playlist_empty": "Playlist does not contain downloadable public videos.",
+        "skip_downloaded": "Skip previously downloaded videos",
+        "skip_downloaded_status": "Skipped previously downloaded video: {url}",
+        "playlist_skip_summary": "Playlist check completed: skipped {skipped} previously downloaded item(s).",
         "error": "Error",
         "cancelling": "Cancelling...",
         "cancelled": "Download cancelled.",
@@ -225,6 +231,10 @@ class DownloadWorker(QThread):
         batch_failed_label: str,
         fetching_playlist_template: str,
         playlist_loaded_template: str,
+        skip_downloaded: bool,
+        downloaded_by_video_id: dict[str, dict[str, str]],
+        skip_downloaded_template: str,
+        playlist_skip_summary_template: str,
     ) -> None:
         super().__init__()
         self.urls = urls
@@ -237,6 +247,10 @@ class DownloadWorker(QThread):
         self.batch_failed_label = batch_failed_label
         self.fetching_playlist_template = fetching_playlist_template
         self.playlist_loaded_template = playlist_loaded_template
+        self.skip_downloaded = skip_downloaded
+        self.downloaded_by_video_id = {video_id: paths.copy() for video_id, paths in downloaded_by_video_id.items()}
+        self.skip_downloaded_template = skip_downloaded_template
+        self.playlist_skip_summary_template = playlist_skip_summary_template
         self.cancel_event = Event()
 
     def cancel(self) -> None:
@@ -285,6 +299,7 @@ class DownloadWorker(QThread):
                     task_urls.append(url)
 
             total = len(task_urls)
+            history_skipped_count = 0
             for index, url in enumerate(task_urls, start=1):
                 if self.cancel_event.is_set():
                     raise DownloadCancelled("Download cancelled by user.")
@@ -293,8 +308,42 @@ class DownloadWorker(QThread):
                     self.status.emit(self.batch_item_template.format(current=index, total=total) + f": {url}")
 
                 try:
+                    video_id = extract_video_id(url)
+                    requested_modes = modes_for_download(self.mode)
+                    existing = self.downloaded_by_video_id.get(video_id, {}) if self.skip_downloaded and video_id else {}
+                    existing_results = []
+                    for requested_mode in requested_modes:
+                        existing_path = existing.get(requested_mode)
+                        if existing_path and Path(existing_path).exists():
+                            existing_results.append((requested_mode, existing_path, True))
+
+                    missing_modes = [mode for mode in requested_modes if mode not in {item[0] for item in existing_results}]
+                    if self.skip_downloaded and video_id and not missing_modes:
+                        history_skipped_count += 1
+                        self.status.emit(self.skip_downloaded_template.format(url=url))
+                        entries.append(
+                            {
+                                "index": index,
+                                "url": url,
+                                "title": existing.get("_title") or url,
+                                "info": None,
+                                "error": "",
+                                "results": existing_results,
+                                "skipped_by_history": True,
+                            }
+                        )
+                        continue
+
                     info = downloader.fetch_video_info(url)
-                    results = downloader.download(url, self.mode)
+                    result_items = list(existing_results)
+                    download_mode = download_mode_for_missing_modes(missing_modes)
+                    if download_mode:
+                        results = downloader.download(url, download_mode)
+                        for result in results:
+                            result_items.append((result.mode, str(result.path), result.skipped))
+                            if video_id and not result.skipped and result.path.exists():
+                                self.downloaded_by_video_id.setdefault(video_id, {})[result.mode] = str(result.path)
+                                self.downloaded_by_video_id[video_id]["_title"] = info.title
                 except DownloadCancelled:
                     raise
                 except Exception as exc:
@@ -318,9 +367,11 @@ class DownloadWorker(QThread):
                             "title": info.title,
                             "info": info,
                             "error": "",
-                            "results": [(result.mode, str(result.path), result.skipped) for result in results],
+                            "results": result_items,
                         }
                     )
+            if history_skipped_count:
+                self.status.emit(self.playlist_skip_summary_template.format(skipped=history_skipped_count))
         except DownloadCancelled as exc:
             self.failed.emit(str(exc))
         except Exception as exc:
@@ -354,6 +405,33 @@ def format_duration(seconds: int | None, unknown: str) -> str:
     return f"{minutes}:{secs:02d}"
 
 
+def modes_for_download(mode: str) -> list[str]:
+    if mode == "both":
+        return ["mp3", "mp4"]
+    return [mode]
+
+
+def download_mode_for_missing_modes(missing_modes: list[str]) -> str:
+    if missing_modes == ["mp3", "mp4"]:
+        return "both"
+    if missing_modes == ["mp3"]:
+        return "mp3"
+    if missing_modes == ["mp4"]:
+        return "mp4"
+    return ""
+
+
+def modes_for_paths(paths: list[str]) -> list[str]:
+    modes = []
+    for raw_path in paths:
+        suffix = Path(str(raw_path)).suffix.lower()
+        if suffix == ".mp3" and "mp3" not in modes:
+            modes.append("mp3")
+        elif suffix == ".mp4" and "mp4" not in modes:
+            modes.append("mp4")
+    return modes
+
+
 def load_history() -> list[dict]:
     if not HISTORY_PATH.exists():
         return []
@@ -366,6 +444,29 @@ def load_history() -> list[dict]:
 
 def save_history(items: list[dict]) -> None:
     HISTORY_PATH.write_text(json.dumps(items[:100], ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def history_downloads_by_video_id() -> dict[str, dict[str, str]]:
+    downloads: dict[str, dict[str, str]] = {}
+    for item in load_history():
+        video_id = str(item.get("video_id") or extract_video_id(str(item.get("url") or "")))
+        if not video_id:
+            continue
+
+        bucket = downloads.setdefault(video_id, {})
+        title = str(item.get("title") or "")
+        if title and "_title" not in bucket:
+            bucket["_title"] = title
+
+        for raw_path in item.get("paths") or []:
+            path = Path(str(raw_path))
+            if not path.exists():
+                continue
+            if path.suffix.lower() == ".mp3":
+                bucket["mp3"] = str(path)
+            elif path.suffix.lower() == ".mp4":
+                bucket["mp4"] = str(path)
+    return downloads
 
 
 class MainWindow(QMainWindow):
@@ -442,6 +543,9 @@ class MainWindow(QMainWindow):
 
         self.notify_checkbox = QCheckBox()
         self.notify_checkbox.setChecked(str(self.settings.value("notify_complete", "true")).lower() != "false")
+        self.skip_downloaded_checkbox = QCheckBox()
+        self.skip_downloaded_checkbox.setChecked(str(self.settings.value("skip_downloaded", "true")).lower() != "false")
+        self.skip_downloaded_checkbox.stateChanged.connect(lambda _state: self.save_settings())
 
         self.start_button = QPushButton()
         self.start_button.clicked.connect(self.start_download)
@@ -524,6 +628,7 @@ class MainWindow(QMainWindow):
         form.addWidget(self.language_label, 3, 0)
         form.addWidget(self.language_combo, 3, 1)
         form.addWidget(self.notify_checkbox, 3, 2, 1, 2)
+        form.addWidget(self.skip_downloaded_checkbox, 3, 4, 1, 2)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.start_button)
@@ -587,6 +692,7 @@ class MainWindow(QMainWindow):
         self.mp4_quality_label.setText(self.t("mp4_quality"))
         self.browse_button.setText(self.t("browse"))
         self.notify_checkbox.setText(self.t("notify"))
+        self.skip_downloaded_checkbox.setText(self.t("skip_downloaded"))
         self.start_button.setText(self.t("start"))
         self.cancel_button.setText(self.t("cancel"))
         self.open_button.setText(self.t("open_output"))
@@ -799,6 +905,10 @@ class MainWindow(QMainWindow):
             self.t("batch_item_failed"),
             self.t("fetching_playlist"),
             self.t("playlist_loaded"),
+            self.skip_downloaded_checkbox.isChecked(),
+            history_downloads_by_video_id(),
+            self.t("skip_downloaded_status"),
+            self.t("playlist_skip_summary"),
         )
         self.worker.status.connect(self.append_status)
         self.worker.finished_ok.connect(self.download_finished)
@@ -937,7 +1047,9 @@ class MainWindow(QMainWindow):
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "title": info.title,
                 "url": url,
+                "video_id": extract_video_id(url),
                 "paths": paths,
+                "download_modes": modes_for_paths(paths),
                 "mode": self.mode_combo.currentText(),
                 "mp3_quality": self.mp3_quality_combo.currentText(),
                 "mp4_quality": self.mp4_quality_combo.currentText(),
@@ -1053,6 +1165,7 @@ class MainWindow(QMainWindow):
         self.browse_button.setEnabled(not running)
         self.mode_combo.setEnabled(not running)
         self.language_combo.setEnabled(not running)
+        self.skip_downloaded_checkbox.setEnabled(not running)
         self.update_quality_controls(not running)
 
     def save_settings(self) -> None:
@@ -1062,6 +1175,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("mp4_quality", self.mp4_quality_combo.currentData())
         self.settings.setValue("language", self.language)
         self.settings.setValue("notify_complete", "true" if self.notify_checkbox.isChecked() else "false")
+        self.settings.setValue("skip_downloaded", "true" if self.skip_downloaded_checkbox.isChecked() else "false")
         self.settings.setValue("window_size", self.size())
 
     def closeEvent(self, event) -> None:  # noqa: N802

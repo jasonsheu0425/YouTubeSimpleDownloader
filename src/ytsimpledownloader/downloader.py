@@ -23,6 +23,20 @@ Mp4Quality = Literal["best", "1080", "720", "480"]
 ProgressCallback = Callable[[str], None]
 
 
+class YtDlpLogger:
+    def __init__(self, emit: ProgressCallback) -> None:
+        self.emit = emit
+
+    def debug(self, message: str) -> None:
+        return
+
+    def warning(self, message: str) -> None:
+        self.emit(f"Warning: {message}")
+
+    def error(self, message: str) -> None:
+        self.emit(f"Error: {message}")
+
+
 class DownloadCancelled(Exception):
     """Raised when the user cancels an active download."""
 
@@ -52,6 +66,25 @@ class PlaylistInfo:
 
 
 PLAYLIST_ID_PREFIXES = ("PL", "UU", "OL", "FL")
+
+
+def extract_video_id(url: str) -> str:
+    parsed = urlparse(url.strip())
+    host = parsed.netloc.lower()
+    path_parts = [part for part in parsed.path.split("/") if part]
+
+    if "youtu.be" in host and path_parts:
+        return path_parts[0]
+
+    query = parse_qs(parsed.query)
+    video_ids = query.get("v") or []
+    if video_ids:
+        return video_ids[0]
+
+    if path_parts and path_parts[0] in {"embed", "shorts", "live"} and len(path_parts) > 1:
+        return path_parts[1]
+
+    return ""
 
 
 def is_playlist_url(url: str) -> bool:
@@ -256,6 +289,7 @@ class SingleVideoDownloader:
             "quiet": True,
             "noprogress": True,
             "no_warnings": False,
+            "logger": YtDlpLogger(self._emit),
         }
         node_path = which("node")
         if node_path:
