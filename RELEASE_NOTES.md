@@ -1,8 +1,12 @@
-# YouTube Simple Downloader v0.1.0
+# YouTube Simple Downloader v0.1.1
 
-First public test release.
+Patch release for the first public test build.
 
-## Features
+## Fixes
+
+- Fixed a crash that could happen after pressing Cancel while a download worker was still shutting down.
+
+## v0.1.0 Features
 
 - Single public YouTube video URL download.
 - MP3, MP4, or MP3 + MP4 modes.
