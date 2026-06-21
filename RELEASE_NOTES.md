@@ -1,8 +1,14 @@
-# YouTube Simple Downloader v0.1.1
+# YouTube Simple Downloader v0.2.0
 
-Patch release for the first public test build.
+Feature release adding multi-URL batch downloads.
 
-## Fixes
+## Features
+
+- Added multi-URL batch mode. Paste multiple YouTube video URLs, one per line, and download them sequentially.
+- Batch mode continues after individual URL failures and records failed items in the result list.
+- Batch mode auto-numbers existing output files to avoid overwriting earlier downloads.
+
+## v0.1.1 Fixes
 
 - Fixed a crash that could happen after pressing Cancel while a download worker was still shutting down.
 

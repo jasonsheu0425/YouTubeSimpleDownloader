@@ -73,13 +73,18 @@ TEXT = {
         "info_loaded": "影片資訊已載入。",
         "preview_error": "預覽錯誤",
         "missing_url_title": "缺少網址",
-        "missing_url": "請輸入單一 YouTube 影片網址。",
+        "missing_url": "請輸入一個或多個 YouTube 影片網址，每行一個。",
         "cannot_read_title": "無法讀取影片",
         "output_folder_line": "輸出資料夾",
         "done": "完成。",
         "download_completed": "下載完成",
         "download_completed_msg": "下載已完成。",
         "output_file": "輸出檔案",
+        "batch_preview": "批量模式：偵測到 {count} 個網址。預覽只會在單一網址時顯示。",
+        "batch_item": "批量下載 {current}/{total}",
+        "batch_done": "批量下載完成：成功 {success}，失敗 {failed}。",
+        "batch_auto_number": "批量模式會自動加編號，避免覆蓋既有檔案。",
+        "batch_item_failed": "下載失敗",
         "error": "錯誤",
         "cancelling": "正在取消...",
         "cancelled": "下載已取消。",
@@ -99,11 +104,11 @@ TEXT = {
         "error_login": "這部影片似乎需要登入。第一版尚不支援登入或 Cookie。",
         "error_network": "網路連線失敗或逾時，請檢查網路後再試一次。",
         "error_limited": "YouTube 暫時限制請求，請稍候再試。",
-        "error_unsupported": "不支援此網址。請貼上單一公開 YouTube 影片網址。",
+        "error_unsupported": "不支援此網址。請貼上公開 YouTube 影片網址。",
     },
     "en": {
         "app_title": "YouTube Simple Downloader",
-        "url": "URL",
+        "url": "URL(s)",
         "output_folder": "Output Folder",
         "browse": "Browse",
         "mode": "Mode",
@@ -134,13 +139,18 @@ TEXT = {
         "info_loaded": "Video info loaded.",
         "preview_error": "Preview error",
         "missing_url_title": "Missing URL",
-        "missing_url": "Please enter a single YouTube video URL.",
+        "missing_url": "Please enter one or more YouTube video URLs, one per line.",
         "cannot_read_title": "Cannot read video",
         "output_folder_line": "Output folder",
         "done": "Done.",
         "download_completed": "Download completed",
         "download_completed_msg": "Download completed.",
         "output_file": "Output file",
+        "batch_preview": "Batch mode: detected {count} URLs. Preview is shown only for a single URL.",
+        "batch_item": "Batch download {current}/{total}",
+        "batch_done": "Batch completed: {success} succeeded, {failed} failed.",
+        "batch_auto_number": "Batch mode uses auto numbering to avoid overwriting existing files.",
+        "batch_item_failed": "Download failed",
         "error": "Error",
         "cancelling": "Cancelling...",
         "cancelled": "Download cancelled.",
@@ -160,7 +170,7 @@ TEXT = {
         "error_login": "This video appears to require sign-in. Version 1 does not support login or cookies yet.",
         "error_network": "Network connection failed or timed out. Please check the connection and try again.",
         "error_limited": "YouTube is temporarily limiting requests. Please wait a bit and try again.",
-        "error_unsupported": "Unsupported URL. Please paste a single public YouTube video URL.",
+        "error_unsupported": "Unsupported URL. Please paste public YouTube video URLs.",
     },
 }
 
@@ -195,20 +205,24 @@ class DownloadWorker(QThread):
 
     def __init__(
         self,
-        url: str,
+        urls: list[str],
         output_dir: Path,
         mode: str,
         file_exists_action: str,
         mp3_quality: str,
         mp4_quality: str,
+        batch_item_template: str,
+        batch_failed_label: str,
     ) -> None:
         super().__init__()
-        self.url = url
+        self.urls = urls
         self.output_dir = output_dir
         self.mode = mode
         self.file_exists_action = file_exists_action
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
+        self.batch_item_template = batch_item_template
+        self.batch_failed_label = batch_failed_label
         self.cancel_event = Event()
 
     def cancel(self) -> None:
@@ -224,13 +238,50 @@ class DownloadWorker(QThread):
                 mp3_quality=self.mp3_quality,
                 mp4_quality=self.mp4_quality,
             )
-            results = downloader.download(self.url, self.mode)
+            entries = []
+            total = len(self.urls)
+            for index, url in enumerate(self.urls, start=1):
+                if self.cancel_event.is_set():
+                    raise DownloadCancelled("Download cancelled by user.")
+
+                if total > 1:
+                    self.status.emit(self.batch_item_template.format(current=index, total=total) + f": {url}")
+
+                try:
+                    info = downloader.fetch_video_info(url)
+                    results = downloader.download(url, self.mode)
+                except DownloadCancelled:
+                    raise
+                except Exception as exc:
+                    if total == 1:
+                        raise
+                    entries.append(
+                        {
+                            "index": index,
+                            "url": url,
+                            "title": url,
+                            "error": str(exc),
+                            "results": [],
+                        }
+                    )
+                    self.status.emit(f"{self.batch_failed_label}: {url} - {exc}")
+                else:
+                    entries.append(
+                        {
+                            "index": index,
+                            "url": url,
+                            "title": info.title,
+                            "info": info,
+                            "error": "",
+                            "results": [(result.mode, str(result.path), result.skipped) for result in results],
+                        }
+                    )
         except DownloadCancelled as exc:
             self.failed.emit(str(exc))
         except Exception as exc:
             self.failed.emit(str(exc))
         else:
-            self.finished_ok.emit([(result.mode, str(result.path), result.skipped) for result in results])
+            self.finished_ok.emit(entries)
 
 
 def friendly_error(message: str, language: str) -> str:
@@ -299,8 +350,10 @@ class MainWindow(QMainWindow):
         self.history_header = QLabel()
         self.status_header = QLabel()
 
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        self.url_input = QTextEdit()
+        self.url_input.setAcceptRichText(False)
+        self.url_input.setFixedHeight(78)
+        self.url_input.setPlaceholderText("https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/watch?v=...")
         self.url_input.textChanged.connect(self.schedule_preview)
 
         self.output_input = QLineEdit(str(self.settings.value("output_dir", str(DEFAULT_DOWNLOAD_DIR))))
@@ -536,10 +589,14 @@ class MainWindow(QMainWindow):
     def schedule_preview(self) -> None:
         self.current_info = None
         self.current_info_url = ""
-        url = self.url_input.text().strip()
-        if not url:
+        urls = self.parse_urls()
+        if not urls:
             self.clear_preview()
             self.preview_timer.stop()
+            return
+        if len(urls) > 1:
+            self.preview_timer.stop()
+            self.show_batch_preview(len(urls))
             return
         self.preview_timer.start()
 
@@ -547,9 +604,10 @@ class MainWindow(QMainWindow):
         if self.preview_worker and self.preview_worker.isRunning():
             return
 
-        url = self.url_input.text().strip()
-        if not url:
+        urls = self.parse_urls()
+        if len(urls) != 1:
             return
+        url = urls[0]
 
         output_dir = Path(self.output_input.text().strip() or DEFAULT_DOWNLOAD_DIR)
         self.append_status(self.t("fetching_info"))
@@ -559,7 +617,7 @@ class MainWindow(QMainWindow):
         self.preview_worker.start()
 
     def preview_finished(self, url: str, info: VideoInfo, thumbnail: bytes) -> None:
-        if url != self.url_input.text().strip():
+        if self.parse_urls() != [url]:
             return
 
         self.current_info = info
@@ -595,40 +653,69 @@ class MainWindow(QMainWindow):
         self.mp3_path_label.setText("MP3: -")
         self.mp4_path_label.setText("MP4: -")
 
+    def show_batch_preview(self, count: int) -> None:
+        self.thumbnail_label.clear()
+        self.thumbnail_label.setText(self.t("no_preview"))
+        self.title_label.setText(self.t("batch_preview").format(count=count))
+        self.channel_label.setText(f"{self.t('channel')}: -")
+        self.duration_label.setText(f"{self.t('duration')}: -")
+        self.mp3_path_label.setText("MP3: -")
+        self.mp4_path_label.setText("MP4: -")
+
+    def parse_urls(self) -> list[str]:
+        urls = []
+        for raw_line in self.url_input.toPlainText().splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            matches = re.findall(r"https?://\S+", line)
+            if matches:
+                urls.extend(match.rstrip(",;") for match in matches)
+            else:
+                urls.append(line)
+        return urls
+
     def start_download(self) -> None:
-        url = self.url_input.text().strip()
-        if not url:
+        urls = self.parse_urls()
+        if not urls:
             QMessageBox.warning(self, self.t("missing_url_title"), self.t("missing_url"))
             return
 
         output_dir = Path(self.output_input.text().strip() or DEFAULT_DOWNLOAD_DIR)
         mode = self.mode_combo.currentData()
-        info = self.video_info_for_start(url, output_dir)
-        if info is None:
-            return
+        if len(urls) == 1:
+            info = self.video_info_for_start(urls[0], output_dir)
+            if info is None:
+                return
 
-        file_exists_action = self.ask_file_exists_action(info, mode)
-        if file_exists_action is None:
-            return
+            file_exists_action = self.ask_file_exists_action(info, mode)
+            if file_exists_action is None:
+                return
+        else:
+            file_exists_action = "number"
 
         self.status_box.clear()
         self.result_list.clear()
         self.progress_bar.setValue(0)
         self.progress_label.setText(self.t("progress_waiting"))
         self.append_status(f"{self.t('output_folder_line')}: {output_dir}")
+        if len(urls) > 1:
+            self.append_status(self.t("batch_auto_number"))
         self.set_running(True)
         self.save_settings()
 
         self.worker = DownloadWorker(
-            url,
+            urls,
             output_dir,
             mode,
             file_exists_action,
             self.mp3_quality_combo.currentData(),
             self.mp4_quality_combo.currentData(),
+            self.t("batch_item"),
+            self.t("batch_item_failed"),
         )
         self.worker.status.connect(self.append_status)
-        self.worker.finished_ok.connect(lambda results: self.download_finished(results, info, url))
+        self.worker.finished_ok.connect(self.download_finished)
         self.worker.failed.connect(self.download_failed)
         self.worker.finished.connect(lambda worker=self.worker: self.cleanup_worker(worker))
         self.worker.start()
@@ -688,24 +775,53 @@ class MainWindow(QMainWindow):
             self.cancel_button.setEnabled(False)
             self.worker.cancel()
 
-    def download_finished(self, results: list[tuple[str, str, bool]], info: VideoInfo, url: str) -> None:
+    def download_finished(self, entries: list[dict]) -> None:
         self.progress_bar.setValue(100)
         self.progress_label.setText("100%")
-        self.append_status(self.t("done"))
-        paths = []
-        for mode, path, skipped in results:
-            paths.append(path)
-            label = f"{mode.upper()}: {path}"
-            if skipped:
-                label += f" ({self.t('skipped')})"
-            item = QListWidgetItem(label)
-            item.setData(Qt.ItemDataRole.UserRole, path)
-            self.result_list.addItem(item)
-            self.append_status(f"{self.t('output_file')}: {path}")
+
+        success_count = 0
+        failed_count = 0
+        is_batch = len(entries) > 1
+        for entry in entries:
+            title = entry.get("title") or entry.get("url") or ""
+            error = entry.get("error") or ""
+            if error:
+                failed_count += 1
+                label = f"{entry.get('index', '')}. {self.t('batch_item_failed')}: {title} - {friendly_error(error, self.language)}"
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, "")
+                self.result_list.addItem(item)
+                continue
+
+            results = entry.get("results") or []
+            if results:
+                success_count += 1
+
+            paths = []
+            for mode, path, skipped in results:
+                paths.append(path)
+                prefix = f"{entry.get('index')}. {title} - " if is_batch else ""
+                label = f"{prefix}{mode.upper()}: {path}"
+                if skipped:
+                    label += f" ({self.t('skipped')})"
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, path)
+                self.result_list.addItem(item)
+                self.append_status(f"{self.t('output_file')}: {path}")
+
+            info = entry.get("info")
+            url = entry.get("url") or ""
+            if info and paths:
+                self.add_history(info, url, paths)
+
+        if is_batch:
+            self.append_status(self.t("batch_done").format(success=success_count, failed=failed_count))
+        else:
+            self.append_status(self.t("done"))
+
         if self.result_list.count():
             self.result_list.setCurrentRow(0)
 
-        self.add_history(info, url, paths)
         self.set_running(False)
 
         if self.notify_checkbox.isChecked():
@@ -778,7 +894,10 @@ class MainWindow(QMainWindow):
         item = self.result_list.currentItem()
         if item is None:
             return None
-        return Path(item.data(Qt.ItemDataRole.UserRole))
+        value = item.data(Qt.ItemDataRole.UserRole)
+        if not value:
+            return None
+        return Path(value)
 
     def open_selected_file(self, *_args) -> None:
         path = self.selected_result_path()
@@ -805,7 +924,7 @@ class MainWindow(QMainWindow):
             self.open_folder(path.parent)
 
     def update_result_buttons(self) -> None:
-        enabled = self.result_list.currentItem() is not None
+        enabled = self.selected_result_path() is not None
         self.open_file_button.setEnabled(enabled)
         self.copy_path_button.setEnabled(enabled)
         self.show_file_button.setEnabled(enabled)
@@ -843,6 +962,7 @@ class MainWindow(QMainWindow):
     def set_running(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
+        self.url_input.setEnabled(not running)
         self.browse_button.setEnabled(not running)
         self.mode_combo.setEnabled(not running)
         self.language_combo.setEnabled(not running)

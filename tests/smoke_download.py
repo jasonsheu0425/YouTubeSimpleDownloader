@@ -12,8 +12,8 @@ from ytsimpledownloader.paths import DEFAULT_DOWNLOAD_DIR, ensure_default_dirs
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Smoke test a single YouTube URL download.")
-    parser.add_argument("url", help="Single public YouTube video URL")
+    parser = argparse.ArgumentParser(description="Smoke test one or more YouTube URL downloads.")
+    parser.add_argument("urls", nargs="+", help="One or more public YouTube video URLs")
     parser.add_argument("--mode", choices=["mp3", "mp4", "both"], default="mp3")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_DOWNLOAD_DIR)
     parser.add_argument("--test-seconds", type=int, help="Download only the first N seconds for a faster smoke test.")
@@ -33,16 +33,30 @@ def main() -> int:
         mp3_quality=args.mp3_quality,
         mp4_quality=args.mp4_quality,
     )
-    results = downloader.download(args.url, args.mode)
+    all_results = []
+    failures = []
+    for index, url in enumerate(args.urls, start=1):
+        print(f"Downloading {index}/{len(args.urls)}: {url}")
+        try:
+            all_results.extend(downloader.download(url, args.mode))
+        except Exception as exc:
+            failures.append((url, exc))
+            print(f"Failed: {url}")
+            print(exc)
 
     print()
     print("Output files:")
-    for result in results:
+    for result in all_results:
         exists = "exists" if result.path.exists() else "missing"
         print(f"- {result.mode.upper()}: {result.path} [{exists}]")
 
-    missing = [result.path for result in results if not result.path.exists()]
-    return 1 if missing else 0
+    missing = [result.path for result in all_results if not result.path.exists()]
+    if failures:
+        print()
+        print("Failures:")
+        for url, exc in failures:
+            print(f"- {url}: {exc}")
+    return 1 if missing or failures else 0
 
 
 if __name__ == "__main__":
