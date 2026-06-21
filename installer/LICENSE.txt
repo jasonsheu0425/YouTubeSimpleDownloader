@@ -3,7 +3,7 @@
 This is a small personal utility for downloading one or more public YouTube video URLs as MP3, MP4, or both.
 
 Current limitations:
-- Public video URLs only.
-- No playlist support.
+- Public video and playlist URLs only.
+- Private playlists require login and are not supported.
 - No login or cookie support.
 - Use only for videos you have the right to save.

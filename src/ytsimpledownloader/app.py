@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .downloader import DownloadCancelled, SingleVideoDownloader, VideoInfo
+from .downloader import DownloadCancelled, SingleVideoDownloader, VideoInfo, is_playlist_url
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 
 
@@ -86,6 +86,10 @@ TEXT = {
         "batch_done": "批量下載完成：成功 {success}，失敗 {failed}。",
         "batch_auto_number": "批量模式會自動加編號，避免覆蓋既有檔案。",
         "batch_item_failed": "下載失敗",
+        "playlist_preview": "播放清單模式：將在開始下載後讀取並展開影片清單。",
+        "fetching_playlist": "正在讀取播放清單：{url}",
+        "playlist_loaded": "播放清單「{title}」已載入，共 {count} 部影片。",
+        "playlist_empty": "播放清單沒有可下載的公開影片。",
         "error": "錯誤",
         "cancelling": "正在取消...",
         "cancelled": "下載已取消。",
@@ -153,6 +157,10 @@ TEXT = {
         "batch_done": "Batch completed: {success} succeeded, {failed} failed.",
         "batch_auto_number": "Batch mode uses auto numbering to avoid overwriting existing files.",
         "batch_item_failed": "Download failed",
+        "playlist_preview": "Playlist mode: videos will be loaded after starting the download.",
+        "fetching_playlist": "Reading playlist: {url}",
+        "playlist_loaded": "Playlist \"{title}\" loaded with {count} videos.",
+        "playlist_empty": "Playlist does not contain downloadable public videos.",
         "error": "Error",
         "cancelling": "Cancelling...",
         "cancelled": "Download cancelled.",
@@ -215,6 +223,8 @@ class DownloadWorker(QThread):
         mp4_quality: str,
         batch_item_template: str,
         batch_failed_label: str,
+        fetching_playlist_template: str,
+        playlist_loaded_template: str,
     ) -> None:
         super().__init__()
         self.urls = urls
@@ -225,6 +235,8 @@ class DownloadWorker(QThread):
         self.mp4_quality = mp4_quality
         self.batch_item_template = batch_item_template
         self.batch_failed_label = batch_failed_label
+        self.fetching_playlist_template = fetching_playlist_template
+        self.playlist_loaded_template = playlist_loaded_template
         self.cancel_event = Event()
 
     def cancel(self) -> None:
@@ -241,8 +253,39 @@ class DownloadWorker(QThread):
                 mp4_quality=self.mp4_quality,
             )
             entries = []
-            total = len(self.urls)
-            for index, url in enumerate(self.urls, start=1):
+            task_urls = []
+            source_total = len(self.urls)
+            for source_index, url in enumerate(self.urls, start=1):
+                if self.cancel_event.is_set():
+                    raise DownloadCancelled("Download cancelled by user.")
+
+                if is_playlist_url(url):
+                    self.status.emit(self.fetching_playlist_template.format(url=url))
+                    try:
+                        playlist = downloader.fetch_playlist_info(url)
+                    except Exception as exc:
+                        if source_total == 1:
+                            raise
+                        entries.append(
+                            {
+                                "index": source_index,
+                                "url": url,
+                                "title": url,
+                                "error": str(exc),
+                                "results": [],
+                            }
+                        )
+                        self.status.emit(f"{self.batch_failed_label}: {url} - {exc}")
+                    else:
+                        task_urls.extend(playlist.urls)
+                        self.status.emit(
+                            self.playlist_loaded_template.format(title=playlist.title, count=len(playlist.urls))
+                        )
+                else:
+                    task_urls.append(url)
+
+            total = len(task_urls)
+            for index, url in enumerate(task_urls, start=1):
                 if self.cancel_event.is_set():
                     raise DownloadCancelled("Download cancelled by user.")
 
@@ -623,6 +666,10 @@ class MainWindow(QMainWindow):
             self.preview_timer.stop()
             self.show_batch_preview(len(urls))
             return
+        if is_playlist_url(urls[0]):
+            self.preview_timer.stop()
+            self.show_playlist_preview()
+            return
         self.preview_timer.start()
 
     def start_preview(self) -> None:
@@ -687,6 +734,15 @@ class MainWindow(QMainWindow):
         self.mp3_path_label.setText("MP3: -")
         self.mp4_path_label.setText("MP4: -")
 
+    def show_playlist_preview(self) -> None:
+        self.thumbnail_label.clear()
+        self.thumbnail_label.setText(self.t("no_preview"))
+        self.title_label.setText(self.t("playlist_preview"))
+        self.channel_label.setText(f"{self.t('channel')}: -")
+        self.duration_label.setText(f"{self.t('duration')}: -")
+        self.mp3_path_label.setText("MP3: -")
+        self.mp4_path_label.setText("MP4: -")
+
     def parse_urls(self) -> list[str]:
         urls = []
         for raw_line in self.url_input.toPlainText().splitlines():
@@ -710,7 +766,8 @@ class MainWindow(QMainWindow):
         if output_dir is None:
             return
         mode = self.mode_combo.currentData()
-        if len(urls) == 1:
+        has_playlist = any(is_playlist_url(url) for url in urls)
+        if len(urls) == 1 and not is_playlist_url(urls[0]):
             info = self.video_info_for_start(urls[0], output_dir)
             if info is None:
                 return
@@ -726,7 +783,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_label.setText(self.t("progress_waiting"))
         self.append_status(f"{self.t('output_folder_line')}: {output_dir}")
-        if len(urls) > 1:
+        if len(urls) > 1 or has_playlist:
             self.append_status(self.t("batch_auto_number"))
         self.set_running(True)
         self.save_settings()
@@ -740,6 +797,8 @@ class MainWindow(QMainWindow):
             self.mp4_quality_combo.currentData(),
             self.t("batch_item"),
             self.t("batch_item_failed"),
+            self.t("fetching_playlist"),
+            self.t("playlist_loaded"),
         )
         self.worker.status.connect(self.append_status)
         self.worker.finished_ok.connect(self.download_finished)

@@ -1,8 +1,14 @@
-# YouTube Simple Downloader v0.2.1
+# YouTube Simple Downloader v0.3.0
 
-Patch release for machines without an `E:` drive.
+Feature release adding YouTube playlist URL support.
 
-## Fixes
+## Features
+
+- Added playlist URL support for public or unlisted YouTube playlists that do not require login.
+- Playlist URLs are expanded into individual video downloads and processed through the existing batch queue.
+- Private playlists and login/cookie-only playlists remain unsupported.
+
+## v0.2.1 Fixes
 
 - Fixed startup failure on computers that do not have an `E:` drive.
 - Moved app data, history, and FFmpeg cache to the user's local app data folder.

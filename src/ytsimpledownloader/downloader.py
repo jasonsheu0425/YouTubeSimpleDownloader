@@ -7,6 +7,7 @@ from shutil import copy2
 from shutil import which
 from threading import Event
 from typing import Callable, Literal
+from urllib.parse import parse_qs, urlparse
 
 import imageio_ffmpeg
 from yt_dlp import YoutubeDL
@@ -42,6 +43,33 @@ class VideoInfo:
     webpage_url: str
     mp3_path: Path
     mp4_path: Path
+
+
+@dataclass(frozen=True)
+class PlaylistInfo:
+    title: str
+    urls: list[str]
+
+
+PLAYLIST_ID_PREFIXES = ("PL", "UU", "OL", "FL")
+
+
+def is_playlist_url(url: str) -> bool:
+    parsed = urlparse(url.strip())
+    host = parsed.netloc.lower()
+    if "youtube.com" not in host and "youtu.be" not in host:
+        return False
+
+    query = parse_qs(parsed.query)
+    playlist_ids = query.get("list") or []
+    if not playlist_ids:
+        return False
+
+    if parsed.path.rstrip("/") == "/playlist":
+        return True
+
+    playlist_id = playlist_ids[0]
+    return parsed.path.rstrip("/") == "/watch" and playlist_id.startswith(PLAYLIST_ID_PREFIXES)
 
 
 class SingleVideoDownloader:
@@ -81,6 +109,40 @@ class SingleVideoDownloader:
             webpage_url=info.get("webpage_url") or clean_url,
             mp3_path=self.expected_output_path(info, ".mp3"),
             mp4_path=self.expected_output_path(info, ".mp4"),
+        )
+
+    def fetch_playlist_info(self, url: str) -> PlaylistInfo:
+        clean_url = url.strip()
+        if not clean_url:
+            raise ValueError("URL is required.")
+
+        opts = self._base_opts()
+        opts["noplaylist"] = False
+        opts["extract_flat"] = "in_playlist"
+        opts["ignoreerrors"] = True
+
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(clean_url, download=False)
+
+        entries = info.get("entries") or []
+        urls = []
+        for entry in entries:
+            if not entry:
+                continue
+            webpage_url = entry.get("webpage_url")
+            if webpage_url:
+                urls.append(webpage_url)
+                continue
+            video_id = entry.get("id") or entry.get("url")
+            if video_id:
+                urls.append(f"https://www.youtube.com/watch?v={video_id}")
+
+        if not urls:
+            raise ValueError("Playlist does not contain downloadable public videos.")
+
+        return PlaylistInfo(
+            title=info.get("title") or "YouTube playlist",
+            urls=urls,
         )
 
     def download(self, url: str, mode: DownloadMode) -> list[DownloadResult]:

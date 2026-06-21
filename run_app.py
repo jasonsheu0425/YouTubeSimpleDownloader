@@ -5,7 +5,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from ytsimpledownloader.downloader import SingleVideoDownloader
+from ytsimpledownloader.downloader import SingleVideoDownloader, is_playlist_url
 from ytsimpledownloader.paths import DEFAULT_DOWNLOAD_DIR, ensure_default_dirs
 
 
@@ -37,7 +37,16 @@ def smoke_main(argv: list[str]) -> int:
             mp4_quality=args.mp4_quality,
         )
         log(f"FFmpeg: {downloader.ffmpeg_path}")
-        results = downloader.download(args.smoke_url, args.mode)
+        urls = [args.smoke_url]
+        if is_playlist_url(args.smoke_url):
+            playlist = downloader.fetch_playlist_info(args.smoke_url)
+            log(f"Playlist: {playlist.title} videos={len(playlist.urls)}")
+            urls = playlist.urls
+
+        results = []
+        for index, url in enumerate(urls, start=1):
+            log(f"Downloading {index}/{len(urls)}: {url}")
+            results.extend(downloader.download(url, args.mode))
         for result in results:
             log(f"Result: {result.mode} {result.path} exists={result.path.exists()}")
         return 0 if all(result.path.exists() for result in results) else 1

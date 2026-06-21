@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(PROJECT_SRC))
 
-from ytsimpledownloader.downloader import SingleVideoDownloader
+from ytsimpledownloader.downloader import SingleVideoDownloader, is_playlist_url
 from ytsimpledownloader.paths import DEFAULT_DOWNLOAD_DIR, ensure_default_dirs
 
 
@@ -35,8 +35,24 @@ def main() -> int:
     )
     all_results = []
     failures = []
-    for index, url in enumerate(args.urls, start=1):
-        print(f"Downloading {index}/{len(args.urls)}: {url}")
+    expanded_urls = []
+    for url in args.urls:
+        if is_playlist_url(url):
+            print(f"Reading playlist: {url}")
+            try:
+                playlist = downloader.fetch_playlist_info(url)
+            except Exception as exc:
+                failures.append((url, exc))
+                print(f"Failed: {url}")
+                print(exc)
+            else:
+                print(f"Playlist loaded: {playlist.title} ({len(playlist.urls)} videos)")
+                expanded_urls.extend(playlist.urls)
+        else:
+            expanded_urls.append(url)
+
+    for index, url in enumerate(expanded_urls, start=1):
+        print(f"Downloading {index}/{len(expanded_urls)}: {url}")
         try:
             all_results.extend(downloader.download(url, args.mode))
         except Exception as exc:

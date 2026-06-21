@@ -4,7 +4,7 @@ $ProjectDir = "E:\YouTubeSimpleDownloader"
 $AppName = "YouTubeSimpleDownloader"
 $DisplayName = "YouTube Simple Downloader"
 $Publisher = "Jason Test Signing"
-$Version = "0.2.1"
+$Version = "0.3.0"
 $Subject = "CN=Jason YouTube Simple Downloader Test Signing"
 $DistDir = Join-Path $ProjectDir "dist\$AppName"
 $AppExe = Join-Path $DistDir "$AppName.exe"
@@ -60,8 +60,8 @@ YouTube Simple Downloader
 This is a small personal utility for downloading one or more public YouTube video URLs as MP3, MP4, or both.
 
 Current limitations:
-- Public video URLs only.
-- No playlist support.
+- Public video and playlist URLs only.
+- Private playlists require login and are not supported.
 - No login or cookie support.
 - Use only for videos you have the right to save.
 "@
