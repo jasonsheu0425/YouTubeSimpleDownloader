@@ -44,6 +44,7 @@ TEXT = {
         "app_title": "YouTube 簡易下載器",
         "url": "網址",
         "output_folder": "輸出資料夾",
+        "output_folder_error": "無法建立輸出資料夾",
         "browse": "瀏覽",
         "mode": "下載模式",
         "language": "語言",
@@ -110,6 +111,7 @@ TEXT = {
         "app_title": "YouTube Simple Downloader",
         "url": "URL(s)",
         "output_folder": "Output Folder",
+        "output_folder_error": "Cannot create output folder",
         "browse": "Browse",
         "mode": "Mode",
         "language": "Language",
@@ -356,7 +358,7 @@ class MainWindow(QMainWindow):
         self.url_input.setPlaceholderText("https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/watch?v=...")
         self.url_input.textChanged.connect(self.schedule_preview)
 
-        self.output_input = QLineEdit(str(self.settings.value("output_dir", str(DEFAULT_DOWNLOAD_DIR))))
+        self.output_input = QLineEdit(str(self.saved_output_dir()))
         self.output_input.textChanged.connect(self.schedule_preview)
         self.browse_button = QPushButton()
         self.browse_button.clicked.connect(self.choose_output_dir)
@@ -586,6 +588,29 @@ class MainWindow(QMainWindow):
         if folder:
             self.output_input.setText(folder)
 
+    def saved_output_dir(self) -> Path:
+        saved = Path(str(self.settings.value("output_dir", str(DEFAULT_DOWNLOAD_DIR)))).expanduser()
+        if self.can_create_dir(saved):
+            return saved
+        return DEFAULT_DOWNLOAD_DIR
+
+    def current_output_dir(self) -> Path:
+        return Path(self.output_input.text().strip() or DEFAULT_DOWNLOAD_DIR).expanduser()
+
+    def can_create_dir(self, path: Path) -> bool:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+        return True
+
+    def selected_output_dir_or_warn(self) -> Path | None:
+        output_dir = self.current_output_dir()
+        if self.can_create_dir(output_dir):
+            return output_dir
+        QMessageBox.warning(self, self.t("output_folder_error"), f"{self.t('output_folder_error')}:\n{output_dir}")
+        return None
+
     def schedule_preview(self) -> None:
         self.current_info = None
         self.current_info_url = ""
@@ -609,7 +634,7 @@ class MainWindow(QMainWindow):
             return
         url = urls[0]
 
-        output_dir = Path(self.output_input.text().strip() or DEFAULT_DOWNLOAD_DIR)
+        output_dir = self.current_output_dir()
         self.append_status(self.t("fetching_info"))
         self.preview_worker = PreviewWorker(url, output_dir)
         self.preview_worker.finished_ok.connect(lambda info, thumbnail: self.preview_finished(url, info, thumbnail))
@@ -681,7 +706,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, self.t("missing_url_title"), self.t("missing_url"))
             return
 
-        output_dir = Path(self.output_input.text().strip() or DEFAULT_DOWNLOAD_DIR)
+        output_dir = self.selected_output_dir_or_warn()
+        if output_dir is None:
+            return
         mode = self.mode_combo.currentData()
         if len(urls) == 1:
             info = self.video_info_for_start(urls[0], output_dir)
@@ -886,8 +913,9 @@ class MainWindow(QMainWindow):
             self.open_path(path)
 
     def open_output_folder(self) -> None:
-        output_dir = Path(self.output_input.text().strip() or DEFAULT_DOWNLOAD_DIR)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = self.selected_output_dir_or_warn()
+        if output_dir is None:
+            return
         self.open_folder(output_dir)
 
     def selected_result_path(self) -> Path | None:
@@ -969,7 +997,7 @@ class MainWindow(QMainWindow):
         self.update_quality_controls(not running)
 
     def save_settings(self) -> None:
-        self.settings.setValue("output_dir", self.output_input.text().strip() or str(DEFAULT_DOWNLOAD_DIR))
+        self.settings.setValue("output_dir", str(self.current_output_dir()))
         self.settings.setValue("mode", self.mode_combo.currentData())
         self.settings.setValue("mp3_quality", self.mp3_quality_combo.currentData())
         self.settings.setValue("mp4_quality", self.mp4_quality_combo.currentData())

@@ -1,8 +1,14 @@
-# YouTube Simple Downloader v0.2.0
+# YouTube Simple Downloader v0.2.1
 
-Feature release adding multi-URL batch downloads.
+Patch release for machines without an `E:` drive.
 
-## Features
+## Fixes
+
+- Fixed startup failure on computers that do not have an `E:` drive.
+- Moved app data, history, and FFmpeg cache to the user's local app data folder.
+- Changed the default download folder to the user's Downloads folder.
+
+## v0.2.0 Features
 
 - Added multi-URL batch mode. Paste multiple YouTube video URLs, one per line, and download them sequentially.
 - Batch mode continues after individual URL failures and records failed items in the result list.

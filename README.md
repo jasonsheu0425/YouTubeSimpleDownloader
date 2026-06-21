@@ -59,7 +59,7 @@ Quality options:
 Default output folder:
 
 ```text
-E:\YouTubeSimpleDownloader\downloads
+%USERPROFILE%\Downloads\YouTubeSimpleDownloader
 ```
 
 ## Build EXE

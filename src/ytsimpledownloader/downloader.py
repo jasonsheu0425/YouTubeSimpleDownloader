@@ -12,6 +12,8 @@ import imageio_ffmpeg
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import download_range_func
 
+from .paths import FFMPEG_DIR
+
 
 DownloadMode = Literal["mp3", "mp4", "both"]
 FileExistsAction = Literal["overwrite", "skip", "number"]
@@ -258,7 +260,7 @@ class SingleVideoDownloader:
 
     def _ensure_ffmpeg_exe(self) -> str:
         source = Path(imageio_ffmpeg.get_ffmpeg_exe())
-        target = Path("E:/YouTubeSimpleDownloader/ffmpeg/ffmpeg.exe")
+        target = FFMPEG_DIR / "ffmpeg.exe"
         if not target.exists() or target.stat().st_size != source.stat().st_size:
             target.parent.mkdir(parents=True, exist_ok=True)
             copy2(source, target)
