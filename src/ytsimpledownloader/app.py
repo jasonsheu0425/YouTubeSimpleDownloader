@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import QSettings, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -37,6 +37,7 @@ from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 
 
 HISTORY_PATH = PROJECT_DIR / "history.json"
+APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "app_icon.ico"
 
 
 TEXT = {
@@ -473,6 +474,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         ensure_default_dirs()
+        if APP_ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.settings = QSettings("YouTubeSimpleDownloader", "YouTubeSimpleDownloader")
         self.language = str(self.settings.value("language", "zh"))
         if self.language not in TEXT:
@@ -1189,6 +1192,8 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    if APP_ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     window = MainWindow()
     window.show()
     return app.exec()

@@ -1,8 +1,12 @@
-# YouTube Simple Downloader v0.4.0
+# YouTube Simple Downloader v0.4.1
 
-Feature release adding playlist update support.
+Patch release adding the app icon.
 
 ## Features
+
+- Added a custom application icon for the EXE, GUI window, installer, Start Menu shortcut, and optional desktop shortcut.
+
+## v0.4.0 Features
 
 - Added a "skip previously downloaded videos" option, enabled by default.
 - Playlist repeat runs now compare video IDs against local download history and only download missing MP3/MP4 formats.

@@ -4,10 +4,11 @@ $ProjectDir = "E:\YouTubeSimpleDownloader"
 $AppName = "YouTubeSimpleDownloader"
 $DisplayName = "YouTube Simple Downloader"
 $Publisher = "Jason Test Signing"
-$Version = "0.4.0"
+$Version = "0.4.1"
 $Subject = "CN=Jason YouTube Simple Downloader Test Signing"
 $DistDir = Join-Path $ProjectDir "dist\$AppName"
 $AppExe = Join-Path $DistDir "$AppName.exe"
+$IconPath = Join-Path $ProjectDir "src\ytsimpledownloader\assets\app_icon.ico"
 $OutputDir = Join-Path $ProjectDir "release"
 $CertPath = Join-Path $OutputDir "Jason-YouTubeSimpleDownloader-TestSigning.cer"
 $IssPath = Join-Path $ProjectDir "installer\YouTubeSimpleDownloader.iss"
@@ -24,6 +25,9 @@ if (!$ISCC) {
 }
 if (!(Test-Path $AppExe)) {
     throw "App EXE not found. Run build_exe.bat first: $AppExe"
+}
+if (!(Test-Path $IconPath)) {
+    throw "App icon not found: $IconPath"
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDir, (Split-Path $IssPath) | Out-Null
@@ -96,6 +100,7 @@ LicenseFile=$licensePath
 InfoAfterFile=$readmePath
 OutputDir=$OutputDir
 OutputBaseFilename=${AppName}_Setup_v$Version-inno-self-signed
+SetupIconFile=$IconPath
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
