@@ -47,6 +47,11 @@ class QueueTask:
     title: str = ""
     status: str = "waiting"
     error: str = ""
+    attempts: int = 0
+    max_retries: int = 0
+    last_error: str = ""
+    friendly_error: str = ""
+    queue_index: int = -1
 
 
 TEXT = {
@@ -75,6 +80,15 @@ TEXT = {
         "move_down": "下移",
         "remove_queue": "移除",
         "clear_queue": "清空佇列",
+        "retry_failed": "重試失敗項目",
+        "auto_retry": "自動重試",
+        "retry_none": "不重試",
+        "retry_once": "重試 1 次",
+        "retry_twice": "重試 2 次",
+        "retry_thrice": "重試 3 次",
+        "retry_failed_empty": "目前沒有失敗項目可以重試。",
+        "retry_failed_started": "準備重試失敗項目：{count} 個。",
+        "retry_attempt": "重試 {attempt}/{max}: {url}",
         "queue_empty": "佇列是空的。",
         "queue_added": "已加入佇列：{count} 個項目。",
         "queue_building": "正在建立下載佇列...",
@@ -139,6 +153,9 @@ TEXT = {
         "error_network": "網路連線失敗或逾時，請檢查網路後再試一次。",
         "error_limited": "YouTube 暫時限制請求，請稍候再試。",
         "error_unsupported": "不支援此網址。請貼上公開 YouTube 影片網址。",
+        "error_ffmpeg": "FFmpeg 轉檔或合併失敗，請稍後重試或改用其他格式。",
+        "error_permission": "檔案權限不足，請確認輸出資料夾可以寫入，或改選其他資料夾。",
+        "error_path": "檔名或路徑可能太長或無效，請改短輸出路徑後再試。",
     },
     "en": {
         "app_title": "YouTube Simple Downloader",
@@ -165,6 +182,15 @@ TEXT = {
         "move_down": "Move Down",
         "remove_queue": "Remove",
         "clear_queue": "Clear Queue",
+        "retry_failed": "Retry Failed",
+        "auto_retry": "Auto Retry",
+        "retry_none": "Do not retry",
+        "retry_once": "Retry 1 time",
+        "retry_twice": "Retry 2 times",
+        "retry_thrice": "Retry 3 times",
+        "retry_failed_empty": "There are no failed items to retry.",
+        "retry_failed_started": "Retrying {count} failed item(s).",
+        "retry_attempt": "Retry {attempt}/{max}: {url}",
         "queue_empty": "The queue is empty.",
         "queue_added": "Added {count} item(s) to the queue.",
         "queue_building": "Building download queue...",
@@ -229,6 +255,9 @@ TEXT = {
         "error_network": "Network connection failed or timed out. Please check the connection and try again.",
         "error_limited": "YouTube is temporarily limiting requests. Please wait a bit and try again.",
         "error_unsupported": "Unsupported URL. Please paste public YouTube video URLs.",
+        "error_ffmpeg": "FFmpeg conversion or merge failed. Please retry later or try another format.",
+        "error_permission": "File permission was denied. Please check the output folder or choose another folder.",
+        "error_path": "The filename or path may be too long or invalid. Please try a shorter output folder.",
     },
 }
 
@@ -284,9 +313,23 @@ class QueueBuildWorker(QThread):
         self.finished_ok.emit(tasks, errors)
 
 
+def copy_queue_task(task: QueueTask) -> QueueTask:
+    return QueueTask(
+        url=task.url,
+        title=task.title,
+        status=task.status,
+        error=task.error,
+        attempts=task.attempts,
+        max_retries=task.max_retries,
+        last_error=task.last_error,
+        friendly_error=task.friendly_error,
+        queue_index=task.queue_index,
+    )
+
+
 class DownloadWorker(QThread):
     status = Signal(str)
-    task_updated = Signal(int, str, str, str)
+    task_updated = Signal(int, str, str, str, int, str)
     finished_ok = Signal(list)
     failed = Signal(str)
 
@@ -306,9 +349,10 @@ class DownloadWorker(QThread):
         downloaded_by_video_id: dict[str, dict[str, str]],
         skip_downloaded_template: str,
         playlist_skip_summary_template: str,
+        retry_attempt_template: str,
     ) -> None:
         super().__init__()
-        self.tasks = [QueueTask(task.url, task.title, task.status, task.error) for task in tasks]
+        self.tasks = [copy_queue_task(task) for task in tasks]
         self.output_dir = output_dir
         self.mode = mode
         self.file_exists_action = file_exists_action
@@ -322,6 +366,7 @@ class DownloadWorker(QThread):
         self.downloaded_by_video_id = {video_id: paths.copy() for video_id, paths in downloaded_by_video_id.items()}
         self.skip_downloaded_template = skip_downloaded_template
         self.playlist_skip_summary_template = playlist_skip_summary_template
+        self.retry_attempt_template = retry_attempt_template
         self.cancel_event = Event()
 
     def cancel(self) -> None:
@@ -339,25 +384,37 @@ class DownloadWorker(QThread):
             )
             entries = []
             task_items = []
-            source_total = len(self.tasks)
             for source_index, task in enumerate(self.tasks, start=1):
                 if self.cancel_event.is_set():
                     raise DownloadCancelled("Download cancelled by user.")
+                if task.status != "waiting":
+                    continue
 
                 url = task.url
                 if is_playlist_url(url):
                     self.status.emit(self.fetching_playlist_template.format(url=url))
+                    task.attempts += 1
+                    queue_index = task.queue_index if task.queue_index >= 0 else source_index - 1
+                    self.task_updated.emit(queue_index, "downloading", task.title or url, "", task.attempts, "")
                     try:
                         playlist = downloader.fetch_playlist_info(url)
                     except Exception as exc:
-                        if source_total == 1:
-                            raise
+                        error_message = str(exc)
+                        error_category = error_key(error_message)
+                        self.task_updated.emit(
+                            queue_index,
+                            "failed",
+                            task.title or url,
+                            error_message,
+                            task.attempts,
+                            error_category,
+                        )
                         entries.append(
                             {
                                 "index": source_index,
                                 "url": url,
                                 "title": url,
-                                "error": str(exc),
+                                "error": error_message,
                                 "results": [],
                             }
                         )
@@ -377,77 +434,119 @@ class DownloadWorker(QThread):
                     raise DownloadCancelled("Download cancelled by user.")
 
                 url = task.url
+                queue_index = task.queue_index if task.queue_index >= 0 else index - 1
                 if total > 1:
                     self.status.emit(self.batch_item_template.format(current=index, total=total) + f": {url}")
 
-                try:
-                    self.task_updated.emit(index - 1, "downloading", task.title or url, "")
-                    video_id = extract_video_id(url)
-                    requested_modes = modes_for_download(self.mode)
-                    existing = self.downloaded_by_video_id.get(video_id, {}) if self.skip_downloaded and video_id else {}
-                    existing_results = []
-                    for requested_mode in requested_modes:
-                        existing_path = existing.get(requested_mode)
-                        if existing_path and Path(existing_path).exists():
-                            existing_results.append((requested_mode, existing_path, True))
+                while True:
+                    try:
+                        task.attempts += 1
+                        self.task_updated.emit(queue_index, "downloading", task.title or url, "", task.attempts, "")
+                        video_id = extract_video_id(url)
+                        requested_modes = modes_for_download(self.mode)
+                        existing = self.downloaded_by_video_id.get(video_id, {}) if self.skip_downloaded and video_id else {}
+                        existing_results = []
+                        for requested_mode in requested_modes:
+                            existing_path = existing.get(requested_mode)
+                            if existing_path and Path(existing_path).exists():
+                                existing_results.append((requested_mode, existing_path, True))
 
-                    missing_modes = [mode for mode in requested_modes if mode not in {item[0] for item in existing_results}]
-                    if self.skip_downloaded and video_id and not missing_modes:
-                        history_skipped_count += 1
-                        self.status.emit(self.skip_downloaded_template.format(url=url))
-                        self.task_updated.emit(index - 1, "skipped", existing.get("_title") or task.title or url, "")
+                        missing_modes = [
+                            mode for mode in requested_modes if mode not in {item[0] for item in existing_results}
+                        ]
+                        if self.skip_downloaded and video_id and not missing_modes:
+                            history_skipped_count += 1
+                            self.status.emit(self.skip_downloaded_template.format(url=url))
+                            self.task_updated.emit(
+                                queue_index,
+                                "skipped",
+                                existing.get("_title") or task.title or url,
+                                "",
+                                task.attempts,
+                                "",
+                            )
+                            entries.append(
+                                {
+                                    "index": index,
+                                    "url": url,
+                                    "title": existing.get("_title") or url,
+                                    "info": None,
+                                    "error": "",
+                                    "results": existing_results,
+                                    "skipped_by_history": True,
+                                }
+                            )
+                            break
+
+                        info = downloader.fetch_video_info(url)
+                        self.task_updated.emit(queue_index, "downloading", info.title, "", task.attempts, "")
+                        result_items = list(existing_results)
+                        download_mode = download_mode_for_missing_modes(missing_modes)
+                        if download_mode:
+                            results = downloader.download(url, download_mode)
+                            for result in results:
+                                result_items.append((result.mode, str(result.path), result.skipped))
+                                if video_id and not result.skipped and result.path.exists():
+                                    self.downloaded_by_video_id.setdefault(video_id, {})[result.mode] = str(result.path)
+                                    self.downloaded_by_video_id[video_id]["_title"] = info.title
+                    except DownloadCancelled:
+                        raise
+                    except Exception as exc:
+                        error_message = str(exc)
+                        error_category = error_key(error_message)
+                        task.last_error = error_message
+                        task.error = error_message
+                        task.friendly_error = error_category
+                        if task.attempts <= task.max_retries:
+                            self.status.emit(
+                                self.retry_attempt_template.format(
+                                    attempt=task.attempts,
+                                    max=task.max_retries,
+                                    url=url,
+                                )
+                            )
+                            self.task_updated.emit(
+                                queue_index,
+                                "downloading",
+                                task.title or url,
+                                error_message,
+                                task.attempts,
+                                error_category,
+                            )
+                            continue
+
+                        self.task_updated.emit(
+                            queue_index,
+                            "failed",
+                            task.title or url,
+                            error_message,
+                            task.attempts,
+                            error_category,
+                        )
                         entries.append(
                             {
                                 "index": index,
                                 "url": url,
-                                "title": existing.get("_title") or url,
-                                "info": None,
-                                "error": "",
-                                "results": existing_results,
-                                "skipped_by_history": True,
+                                "title": task.title or url,
+                                "error": error_message,
+                                "results": [],
                             }
                         )
-                        continue
-
-                    info = downloader.fetch_video_info(url)
-                    self.task_updated.emit(index - 1, "downloading", info.title, "")
-                    result_items = list(existing_results)
-                    download_mode = download_mode_for_missing_modes(missing_modes)
-                    if download_mode:
-                        results = downloader.download(url, download_mode)
-                        for result in results:
-                            result_items.append((result.mode, str(result.path), result.skipped))
-                            if video_id and not result.skipped and result.path.exists():
-                                self.downloaded_by_video_id.setdefault(video_id, {})[result.mode] = str(result.path)
-                                self.downloaded_by_video_id[video_id]["_title"] = info.title
-                except DownloadCancelled:
-                    raise
-                except Exception as exc:
-                    self.task_updated.emit(index - 1, "failed", task.title or url, str(exc))
-                    if total == 1:
-                        raise
-                    entries.append(
-                        {
-                            "index": index,
-                            "url": url,
-                            "title": url,
-                            "error": str(exc),
-                            "results": [],
-                        }
-                    )
-                    self.status.emit(f"{self.batch_failed_label}: {url} - {exc}")
-                else:
-                    entries.append(
-                        {
-                            "index": index,
-                            "url": url,
-                            "title": info.title,
-                            "info": info,
-                            "error": "",
-                            "results": result_items,
-                        }
-                    )
-                    self.task_updated.emit(index - 1, "completed", info.title, "")
+                        self.status.emit(f"{self.batch_failed_label}: {url} - {exc}")
+                        break
+                    else:
+                        entries.append(
+                            {
+                                "index": index,
+                                "url": url,
+                                "title": info.title,
+                                "info": info,
+                                "error": "",
+                                "results": result_items,
+                            }
+                        )
+                        self.task_updated.emit(queue_index, "completed", info.title, "", task.attempts, "")
+                        break
             if history_skipped_count:
                 self.status.emit(self.playlist_skip_summary_template.format(skipped=history_skipped_count))
         except DownloadCancelled as exc:
@@ -458,18 +557,68 @@ class DownloadWorker(QThread):
             self.finished_ok.emit(entries)
 
 
-def friendly_error(message: str, language: str) -> str:
+def error_key(message: str) -> str:
     lower = message.lower()
-    if "video unavailable" in lower or "private video" in lower:
-        return TEXT[language]["error_unavailable"]
-    if "sign in" in lower or "login" in lower or "cookies" in lower:
-        return TEXT[language]["error_login"]
-    if "timed out" in lower or "connection" in lower or "network" in lower or "temporary failure" in lower:
-        return TEXT[language]["error_network"]
-    if "http error 429" in lower or "too many requests" in lower or "temporarily unavailable" in lower:
-        return TEXT[language]["error_limited"]
+    if (
+        "video unavailable" in lower
+        or "private video" in lower
+        or "not available" in lower
+        or "this video is unavailable" in lower
+        or "blocked in your country" in lower
+        or "region" in lower
+        or "geo" in lower
+        or "removed" in lower
+        or "deleted" in lower
+    ):
+        return "error_unavailable"
+    if "sign in" in lower or "login" in lower or "cookies" in lower or "confirm your age" in lower:
+        return "error_login"
+    if (
+        "timed out" in lower
+        or "connection" in lower
+        or "network" in lower
+        or "temporary failure" in lower
+        or "name resolution" in lower
+        or "remote end closed connection" in lower
+        or "connection reset" in lower
+    ):
+        return "error_network"
+    if (
+        "http error 429" in lower
+        or "too many requests" in lower
+        or "temporarily unavailable" in lower
+        or "try again later" in lower
+        or "confirm you are not a bot" in lower
+    ):
+        return "error_limited"
     if "unsupported url" in lower:
-        return TEXT[language]["error_unsupported"]
+        return "error_unsupported"
+    if "ffmpeg" in lower or "postprocessing" in lower or "conversion failed" in lower or "merge" in lower:
+        return "error_ffmpeg"
+    if (
+        "permission denied" in lower
+        or "access is denied" in lower
+        or "winerror 5" in lower
+        or "operation not permitted" in lower
+    ):
+        return "error_permission"
+    if (
+        "file name too long" in lower
+        or "filename too long" in lower
+        or "path too long" in lower
+        or "winerror 3" in lower
+        or "winerror 123" in lower
+        or "invalid argument" in lower
+        or "invalid path" in lower
+    ):
+        return "error_path"
+    return ""
+
+
+def friendly_error(message: str, language: str, category: str = "") -> str:
+    key = category or error_key(message)
+    if key:
+        return TEXT[language][key]
     return message
 
 
@@ -573,6 +722,7 @@ class MainWindow(QMainWindow):
         self.language_label = QLabel()
         self.mp3_quality_label = QLabel()
         self.mp4_quality_label = QLabel()
+        self.retry_label = QLabel()
         self.preview_header = QLabel()
         self.queue_header = QLabel()
         self.results_header = QLabel()
@@ -630,6 +780,17 @@ class MainWindow(QMainWindow):
         self.skip_downloaded_checkbox.setChecked(str(self.settings.value("skip_downloaded", "true")).lower() != "false")
         self.skip_downloaded_checkbox.stateChanged.connect(lambda _state: self.save_settings())
 
+        self.retry_combo = QComboBox()
+        self.retry_combo.addItem("", 0)
+        self.retry_combo.addItem("", 1)
+        self.retry_combo.addItem("", 2)
+        self.retry_combo.addItem("", 3)
+        saved_retries = int(str(self.settings.value("max_retries", "0")))
+        retry_index = self.retry_combo.findData(max(0, min(3, saved_retries)))
+        if retry_index >= 0:
+            self.retry_combo.setCurrentIndex(retry_index)
+        self.retry_combo.currentIndexChanged.connect(lambda _index: self.save_settings())
+
         self.start_button = QPushButton()
         self.start_button.clicked.connect(self.start_download)
         self.add_queue_button = QPushButton()
@@ -686,6 +847,8 @@ class MainWindow(QMainWindow):
         self.remove_queue_button.clicked.connect(self.remove_selected_queue_item)
         self.clear_queue_button = QPushButton()
         self.clear_queue_button.clicked.connect(self.clear_queue)
+        self.retry_failed_button = QPushButton()
+        self.retry_failed_button.clicked.connect(self.retry_failed_downloads)
 
         self.open_file_button = QPushButton()
         self.open_file_button.clicked.connect(self.open_selected_file)
@@ -727,6 +890,8 @@ class MainWindow(QMainWindow):
         form.addWidget(self.language_combo, 3, 1)
         form.addWidget(self.notify_checkbox, 3, 2, 1, 2)
         form.addWidget(self.skip_downloaded_checkbox, 3, 4, 1, 2)
+        form.addWidget(self.retry_label, 4, 0)
+        form.addWidget(self.retry_combo, 4, 1)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.add_queue_button)
@@ -757,6 +922,7 @@ class MainWindow(QMainWindow):
         queue_buttons.addWidget(self.move_down_button)
         queue_buttons.addWidget(self.remove_queue_button)
         queue_buttons.addWidget(self.clear_queue_button)
+        queue_buttons.addWidget(self.retry_failed_button)
         queue_buttons.addStretch(1)
 
         result_buttons = QHBoxLayout()
@@ -799,6 +965,11 @@ class MainWindow(QMainWindow):
         self.language_label.setText(self.t("language"))
         self.mp3_quality_label.setText(self.t("mp3_quality"))
         self.mp4_quality_label.setText(self.t("mp4_quality"))
+        self.retry_label.setText(self.t("auto_retry"))
+        self.retry_combo.setItemText(0, self.t("retry_none"))
+        self.retry_combo.setItemText(1, self.t("retry_once"))
+        self.retry_combo.setItemText(2, self.t("retry_twice"))
+        self.retry_combo.setItemText(3, self.t("retry_thrice"))
         self.browse_button.setText(self.t("browse"))
         self.notify_checkbox.setText(self.t("notify"))
         self.skip_downloaded_checkbox.setText(self.t("skip_downloaded"))
@@ -814,6 +985,7 @@ class MainWindow(QMainWindow):
         self.move_down_button.setText(self.t("move_down"))
         self.remove_queue_button.setText(self.t("remove_queue"))
         self.clear_queue_button.setText(self.t("clear_queue"))
+        self.retry_failed_button.setText(self.t("retry_failed"))
         self.results_header.setText(self.t("results"))
         self.history_header.setText(self.t("history"))
         self.status_header.setText(self.t("status"))
@@ -989,8 +1161,10 @@ class MainWindow(QMainWindow):
         for index, task in enumerate(self.download_queue, start=1):
             title = task.title or task.url
             label = f"{index}. [{self.status_label(task.status)}] {title}"
-            if task.error:
-                label += f" - {friendly_error(task.error, self.language)}"
+            if task.attempts:
+                label += f" ({task.attempts}/{task.max_retries + 1})"
+            if task.last_error or task.error:
+                label += f" - {friendly_error(task.last_error or task.error, self.language, task.friendly_error)}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, index - 1)
             self.queue_list.addItem(item)
@@ -1016,6 +1190,7 @@ class MainWindow(QMainWindow):
         self.move_down_button.setEnabled(can_edit and has_selection and index < len(self.download_queue) - 1)
         self.remove_queue_button.setEnabled(can_edit and has_selection)
         self.clear_queue_button.setEnabled(can_edit and bool(self.download_queue))
+        self.retry_failed_button.setEnabled(can_edit and any(task.status == "failed" for task in self.download_queue))
 
     def move_queue_item(self, delta: int) -> None:
         index = self.selected_queue_index()
@@ -1038,6 +1213,18 @@ class MainWindow(QMainWindow):
     def clear_queue(self) -> None:
         self.download_queue.clear()
         self.refresh_queue()
+
+    def current_max_retries(self) -> int:
+        return int(self.retry_combo.currentData() or 0)
+
+    def reset_task_for_run(self, task: QueueTask, index: int, status: str = "waiting") -> None:
+        task.status = status
+        task.error = ""
+        task.last_error = ""
+        task.friendly_error = ""
+        task.attempts = 0
+        task.max_retries = self.current_max_retries()
+        task.queue_index = index
 
     def add_urls_to_queue(self) -> None:
         urls = self.parse_urls()
@@ -1071,7 +1258,15 @@ class MainWindow(QMainWindow):
             self.queue_worker = None
         self.add_queue_button.setEnabled(not bool(self.worker and self.worker.isRunning()))
 
-    def update_queue_task(self, index: int, status: str, title: str, error: str) -> None:
+    def update_queue_task(
+        self,
+        index: int,
+        status: str,
+        title: str,
+        error: str,
+        attempts: int,
+        friendly_error_key: str,
+    ) -> None:
         if index < 0 or index >= len(self.download_queue):
             return
         task = self.download_queue[index]
@@ -1079,12 +1274,35 @@ class MainWindow(QMainWindow):
         if title:
             task.title = title
         task.error = error
+        task.last_error = error
+        task.friendly_error = friendly_error_key
+        task.attempts = attempts
         self.refresh_queue()
 
-    def start_download(self) -> None:
-        tasks = [QueueTask(task.url, task.title, "waiting", "") for task in self.download_queue]
-        if not tasks:
-            tasks = [QueueTask(url=url) for url in self.parse_urls()]
+    def retry_failed_downloads(self) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+        failed_indexes = [index for index, task in enumerate(self.download_queue) if task.status == "failed"]
+        if not failed_indexes:
+            self.append_status(self.t("retry_failed_empty"))
+            return
+        for index, task in enumerate(self.download_queue):
+            task.queue_index = index
+            task.max_retries = self.current_max_retries()
+            if index in failed_indexes:
+                self.reset_task_for_run(task, index)
+        self.append_status(self.t("retry_failed_started").format(count=len(failed_indexes)))
+        self.start_download(retry_failed_only=True)
+
+    def start_download(self, retry_failed_only: bool = False) -> None:
+        if isinstance(retry_failed_only, bool) and retry_failed_only:
+            tasks = [copy_queue_task(task) for task in self.download_queue]
+        else:
+            tasks = [QueueTask(task.url, task.title) for task in self.download_queue]
+            if not tasks:
+                tasks = [QueueTask(url=url) for url in self.parse_urls()]
+            for index, task in enumerate(tasks):
+                self.reset_task_for_run(task, index)
         if not tasks:
             QMessageBox.warning(self, self.t("missing_url_title"), self.t("missing_url"))
             return
@@ -1132,6 +1350,7 @@ class MainWindow(QMainWindow):
             history_downloads_by_video_id(),
             self.t("skip_downloaded_status"),
             self.t("playlist_skip_summary"),
+            self.t("retry_attempt"),
         )
         self.worker.status.connect(self.append_status)
         self.worker.task_updated.connect(self.update_queue_task)
@@ -1396,6 +1615,7 @@ class MainWindow(QMainWindow):
         self.mode_combo.setEnabled(not running)
         self.language_combo.setEnabled(not running)
         self.skip_downloaded_checkbox.setEnabled(not running)
+        self.retry_combo.setEnabled(not running)
         self.update_quality_controls(not running)
         self.update_queue_buttons()
 
@@ -1407,6 +1627,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("language", self.language)
         self.settings.setValue("notify_complete", "true" if self.notify_checkbox.isChecked() else "false")
         self.settings.setValue("skip_downloaded", "true" if self.skip_downloaded_checkbox.isChecked() else "false")
+        self.settings.setValue("max_retries", self.current_max_retries())
         self.settings.setValue("window_size", self.size())
 
     def closeEvent(self, event) -> None:  # noqa: N802

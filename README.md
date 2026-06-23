@@ -9,6 +9,8 @@ Download public YouTube video URLs or playlist URLs as MP3, MP4, or both.
 - Playlist repeat runs can skip videos that already exist in the local download history, so the app only downloads newly added videos.
 - Preview title, channel, duration, thumbnail, and expected MP3/MP4 paths before download when a single URL is entered.
 - Download queue supports adding URLs, expanding playlists, moving items up/down, removing items, and clearing the queue before starting.
+- Failed queue items can be retried without re-running completed items.
+- Optional automatic retries: none, 1, 2, or 3 retries per item.
 - Batch mode downloads multiple URLs sequentially and continues after individual URL failures.
 - Playlist mode expands videos into the download queue before downloading.
 - Download MP3, MP4, or MP3 + MP4.
@@ -22,7 +24,7 @@ Download public YouTube video URLs or playlist URLs as MP3, MP4, or both.
 - Supports Traditional Chinese and English UI.
 - Can play a completion notification when downloads finish.
 - Includes one-click clear URL and clear status buttons.
-- Remembers the last output folder, download mode, quality settings, language, notification setting, and window size.
+- Remembers the last output folder, download mode, quality settings, auto retry setting, language, notification setting, and window size.
 - Uses `imageio-ffmpeg` to provide FFmpeg without a separate external FFmpeg install.
 
 ## Setup

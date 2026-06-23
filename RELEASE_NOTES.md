@@ -1,8 +1,16 @@
-# YouTube Simple Downloader v0.5.0
+# YouTube Simple Downloader v0.5.1
 
-Feature release adding download queue management.
+Patch release adding failed item retry support.
 
 ## Features
+
+- Added Retry Failed for queue items that end in the Failed state.
+- Added an Auto Retry setting: do not retry, retry 1 time, retry 2 times, or retry 3 times.
+- Queue tasks now track attempts, max retries, last error, and friendly error category.
+- Failed downloads stay in the queue as Failed instead of only being listed in the result area.
+- Expanded friendly error categories for unavailable/region-blocked videos, sign-in required, network errors, YouTube temporary limits, FFmpeg failures, file permission errors, and filename/path problems.
+
+## v0.5.0 Features
 
 - Added a visible download queue.
 - Added Add to Queue, Move Up, Move Down, Remove, and Clear Queue actions.
