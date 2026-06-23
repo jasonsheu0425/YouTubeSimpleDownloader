@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -40,6 +41,14 @@ HISTORY_PATH = PROJECT_DIR / "history.json"
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "app_icon.ico"
 
 
+@dataclass
+class QueueTask:
+    url: str
+    title: str = ""
+    status: str = "waiting"
+    error: str = ""
+
+
 TEXT = {
     "zh": {
         "app_title": "YouTube 簡易下載器",
@@ -60,6 +69,22 @@ TEXT = {
         "preview": "影片預覽",
         "results": "下載結果",
         "status": "狀態 / 錯誤訊息",
+        "queue": "下載佇列",
+        "add_queue": "加入佇列",
+        "move_up": "上移",
+        "move_down": "下移",
+        "remove_queue": "移除",
+        "clear_queue": "清空佇列",
+        "queue_empty": "佇列是空的。",
+        "queue_added": "已加入佇列：{count} 個項目。",
+        "queue_building": "正在建立下載佇列...",
+        "queue_item_failed": "加入佇列失敗",
+        "queue_status_waiting": "等待",
+        "queue_status_downloading": "下載中",
+        "queue_status_completed": "完成",
+        "queue_status_failed": "失敗",
+        "queue_status_skipped": "略過",
+        "queue_status_canceled": "已取消",
         "history": "下載歷史",
         "open_file": "開啟檔案",
         "copy_path": "複製路徑",
@@ -134,6 +159,22 @@ TEXT = {
         "preview": "Video Preview",
         "results": "Download Results",
         "status": "Status / Errors",
+        "queue": "Download Queue",
+        "add_queue": "Add to Queue",
+        "move_up": "Move Up",
+        "move_down": "Move Down",
+        "remove_queue": "Remove",
+        "clear_queue": "Clear Queue",
+        "queue_empty": "The queue is empty.",
+        "queue_added": "Added {count} item(s) to the queue.",
+        "queue_building": "Building download queue...",
+        "queue_item_failed": "Failed to add to queue",
+        "queue_status_waiting": "Waiting",
+        "queue_status_downloading": "Downloading",
+        "queue_status_completed": "Completed",
+        "queue_status_failed": "Failed",
+        "queue_status_skipped": "Skipped",
+        "queue_status_canceled": "Canceled",
         "history": "Download History",
         "open_file": "Open File",
         "copy_path": "Copy Path",
@@ -215,14 +256,43 @@ class PreviewWorker(QThread):
             self.finished_ok.emit(info, thumbnail)
 
 
+class QueueBuildWorker(QThread):
+    status = Signal(str)
+    finished_ok = Signal(object, object)
+
+    def __init__(self, urls: list[str], output_dir: Path) -> None:
+        super().__init__()
+        self.urls = urls
+        self.output_dir = output_dir
+
+    def run(self) -> None:
+        downloader = SingleVideoDownloader(self.output_dir, progress_callback=self.status.emit)
+        tasks = []
+        errors = []
+        for url in self.urls:
+            if is_playlist_url(url):
+                self.status.emit(f"Reading playlist: {url}")
+                try:
+                    playlist = downloader.fetch_playlist_info(url)
+                except Exception as exc:
+                    errors.append(f"{url}: {exc}")
+                    continue
+                tasks.extend(QueueTask(url=item_url, title=item_url) for item_url in playlist.urls)
+                self.status.emit(f"Playlist loaded: {playlist.title} ({len(playlist.urls)} videos)")
+            else:
+                tasks.append(QueueTask(url=url, title=url))
+        self.finished_ok.emit(tasks, errors)
+
+
 class DownloadWorker(QThread):
     status = Signal(str)
+    task_updated = Signal(int, str, str, str)
     finished_ok = Signal(list)
     failed = Signal(str)
 
     def __init__(
         self,
-        urls: list[str],
+        tasks: list[QueueTask],
         output_dir: Path,
         mode: str,
         file_exists_action: str,
@@ -238,7 +308,7 @@ class DownloadWorker(QThread):
         playlist_skip_summary_template: str,
     ) -> None:
         super().__init__()
-        self.urls = urls
+        self.tasks = [QueueTask(task.url, task.title, task.status, task.error) for task in tasks]
         self.output_dir = output_dir
         self.mode = mode
         self.file_exists_action = file_exists_action
@@ -268,12 +338,13 @@ class DownloadWorker(QThread):
                 mp4_quality=self.mp4_quality,
             )
             entries = []
-            task_urls = []
-            source_total = len(self.urls)
-            for source_index, url in enumerate(self.urls, start=1):
+            task_items = []
+            source_total = len(self.tasks)
+            for source_index, task in enumerate(self.tasks, start=1):
                 if self.cancel_event.is_set():
                     raise DownloadCancelled("Download cancelled by user.")
 
+                url = task.url
                 if is_playlist_url(url):
                     self.status.emit(self.fetching_playlist_template.format(url=url))
                     try:
@@ -292,23 +363,25 @@ class DownloadWorker(QThread):
                         )
                         self.status.emit(f"{self.batch_failed_label}: {url} - {exc}")
                     else:
-                        task_urls.extend(playlist.urls)
+                        task_items.extend(QueueTask(url=item_url, title=item_url) for item_url in playlist.urls)
                         self.status.emit(
                             self.playlist_loaded_template.format(title=playlist.title, count=len(playlist.urls))
                         )
                 else:
-                    task_urls.append(url)
+                    task_items.append(task)
 
-            total = len(task_urls)
+            total = len(task_items)
             history_skipped_count = 0
-            for index, url in enumerate(task_urls, start=1):
+            for index, task in enumerate(task_items, start=1):
                 if self.cancel_event.is_set():
                     raise DownloadCancelled("Download cancelled by user.")
 
+                url = task.url
                 if total > 1:
                     self.status.emit(self.batch_item_template.format(current=index, total=total) + f": {url}")
 
                 try:
+                    self.task_updated.emit(index - 1, "downloading", task.title or url, "")
                     video_id = extract_video_id(url)
                     requested_modes = modes_for_download(self.mode)
                     existing = self.downloaded_by_video_id.get(video_id, {}) if self.skip_downloaded and video_id else {}
@@ -322,6 +395,7 @@ class DownloadWorker(QThread):
                     if self.skip_downloaded and video_id and not missing_modes:
                         history_skipped_count += 1
                         self.status.emit(self.skip_downloaded_template.format(url=url))
+                        self.task_updated.emit(index - 1, "skipped", existing.get("_title") or task.title or url, "")
                         entries.append(
                             {
                                 "index": index,
@@ -336,6 +410,7 @@ class DownloadWorker(QThread):
                         continue
 
                     info = downloader.fetch_video_info(url)
+                    self.task_updated.emit(index - 1, "downloading", info.title, "")
                     result_items = list(existing_results)
                     download_mode = download_mode_for_missing_modes(missing_modes)
                     if download_mode:
@@ -348,6 +423,7 @@ class DownloadWorker(QThread):
                 except DownloadCancelled:
                     raise
                 except Exception as exc:
+                    self.task_updated.emit(index - 1, "failed", task.title or url, str(exc))
                     if total == 1:
                         raise
                     entries.append(
@@ -371,6 +447,7 @@ class DownloadWorker(QThread):
                             "results": result_items,
                         }
                     )
+                    self.task_updated.emit(index - 1, "completed", info.title, "")
             if history_skipped_count:
                 self.status.emit(self.playlist_skip_summary_template.format(skipped=history_skipped_count))
         except DownloadCancelled as exc:
@@ -483,6 +560,8 @@ class MainWindow(QMainWindow):
 
         self.worker: DownloadWorker | None = None
         self.preview_worker: PreviewWorker | None = None
+        self.queue_worker: QueueBuildWorker | None = None
+        self.download_queue: list[QueueTask] = []
         self.current_info: VideoInfo | None = None
         self.current_info_url = ""
 
@@ -495,6 +574,7 @@ class MainWindow(QMainWindow):
         self.mp3_quality_label = QLabel()
         self.mp4_quality_label = QLabel()
         self.preview_header = QLabel()
+        self.queue_header = QLabel()
         self.results_header = QLabel()
         self.history_header = QLabel()
         self.status_header = QLabel()
@@ -552,6 +632,8 @@ class MainWindow(QMainWindow):
 
         self.start_button = QPushButton()
         self.start_button.clicked.connect(self.start_download)
+        self.add_queue_button = QPushButton()
+        self.add_queue_button.clicked.connect(self.add_urls_to_queue)
         self.cancel_button = QPushButton()
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel_download)
@@ -590,8 +672,20 @@ class MainWindow(QMainWindow):
         self.result_list.itemDoubleClicked.connect(self.open_selected_file)
         self.result_list.currentItemChanged.connect(lambda _current, _previous: self.update_result_buttons())
 
+        self.queue_list = QListWidget()
+        self.queue_list.currentItemChanged.connect(lambda _current, _previous: self.update_queue_buttons())
+
         self.history_list = QListWidget()
         self.history_list.itemDoubleClicked.connect(self.open_selected_history_file)
+
+        self.move_up_button = QPushButton()
+        self.move_up_button.clicked.connect(lambda: self.move_queue_item(-1))
+        self.move_down_button = QPushButton()
+        self.move_down_button.clicked.connect(lambda: self.move_queue_item(1))
+        self.remove_queue_button = QPushButton()
+        self.remove_queue_button.clicked.connect(self.remove_selected_queue_item)
+        self.clear_queue_button = QPushButton()
+        self.clear_queue_button.clicked.connect(self.clear_queue)
 
         self.open_file_button = QPushButton()
         self.open_file_button.clicked.connect(self.open_selected_file)
@@ -608,6 +702,7 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self.update_language()
         self.update_result_buttons()
+        self.update_queue_buttons()
         self.update_quality_controls()
         self.refresh_history()
 
@@ -634,6 +729,7 @@ class MainWindow(QMainWindow):
         form.addWidget(self.skip_downloaded_checkbox, 3, 4, 1, 2)
 
         buttons = QHBoxLayout()
+        buttons.addWidget(self.add_queue_button)
         buttons.addWidget(self.start_button)
         buttons.addWidget(self.cancel_button)
         buttons.addWidget(self.open_button)
@@ -656,6 +752,13 @@ class MainWindow(QMainWindow):
         progress_layout.addWidget(self.progress_bar)
         progress_layout.addWidget(self.progress_label, 1)
 
+        queue_buttons = QHBoxLayout()
+        queue_buttons.addWidget(self.move_up_button)
+        queue_buttons.addWidget(self.move_down_button)
+        queue_buttons.addWidget(self.remove_queue_button)
+        queue_buttons.addWidget(self.clear_queue_button)
+        queue_buttons.addStretch(1)
+
         result_buttons = QHBoxLayout()
         result_buttons.addWidget(self.open_file_button)
         result_buttons.addWidget(self.copy_path_button)
@@ -671,6 +774,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.preview_header)
         layout.addLayout(preview_layout)
         layout.addLayout(buttons)
+        layout.addWidget(self.queue_header)
+        layout.addWidget(self.queue_list)
+        layout.addLayout(queue_buttons)
         layout.addLayout(progress_layout)
         layout.addWidget(self.results_header)
         layout.addWidget(self.result_list)
@@ -696,12 +802,18 @@ class MainWindow(QMainWindow):
         self.browse_button.setText(self.t("browse"))
         self.notify_checkbox.setText(self.t("notify"))
         self.skip_downloaded_checkbox.setText(self.t("skip_downloaded"))
+        self.add_queue_button.setText(self.t("add_queue"))
         self.start_button.setText(self.t("start"))
         self.cancel_button.setText(self.t("cancel"))
         self.open_button.setText(self.t("open_output"))
         self.clear_url_button.setText(self.t("clear_url"))
         self.clear_status_button.setText(self.t("clear_status"))
         self.preview_header.setText(self.t("preview"))
+        self.queue_header.setText(self.t("queue"))
+        self.move_up_button.setText(self.t("move_up"))
+        self.move_down_button.setText(self.t("move_down"))
+        self.remove_queue_button.setText(self.t("remove_queue"))
+        self.clear_queue_button.setText(self.t("clear_queue"))
         self.results_header.setText(self.t("results"))
         self.history_header.setText(self.t("history"))
         self.status_header.setText(self.t("status"))
@@ -711,6 +823,7 @@ class MainWindow(QMainWindow):
         self.clear_history_button.setText(self.t("clear_history"))
         self.clear_preview()
         self.progress_label.setText(self.t("progress_waiting"))
+        self.refresh_queue()
         self.refresh_history()
 
     def change_language(self) -> None:
@@ -865,9 +978,114 @@ class MainWindow(QMainWindow):
                 urls.append(line)
         return urls
 
-    def start_download(self) -> None:
+    def status_label(self, status: str) -> str:
+        return self.t(f"queue_status_{status}") if f"queue_status_{status}" in TEXT[self.language] else status
+
+    def refresh_queue(self) -> None:
+        if not hasattr(self, "queue_list"):
+            return
+        selected = self.selected_queue_index()
+        self.queue_list.clear()
+        for index, task in enumerate(self.download_queue, start=1):
+            title = task.title or task.url
+            label = f"{index}. [{self.status_label(task.status)}] {title}"
+            if task.error:
+                label += f" - {friendly_error(task.error, self.language)}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, index - 1)
+            self.queue_list.addItem(item)
+        if self.download_queue:
+            self.queue_list.setCurrentRow(min(selected if selected is not None else 0, len(self.download_queue) - 1))
+        self.update_queue_buttons()
+
+    def selected_queue_index(self) -> int | None:
+        if not hasattr(self, "queue_list"):
+            return None
+        item = self.queue_list.currentItem()
+        if item is None:
+            return None
+        value = item.data(Qt.ItemDataRole.UserRole)
+        return int(value) if value is not None else None
+
+    def update_queue_buttons(self) -> None:
+        running = bool(self.worker and self.worker.isRunning())
+        index = self.selected_queue_index()
+        has_selection = index is not None
+        can_edit = not running
+        self.move_up_button.setEnabled(can_edit and has_selection and index > 0)
+        self.move_down_button.setEnabled(can_edit and has_selection and index < len(self.download_queue) - 1)
+        self.remove_queue_button.setEnabled(can_edit and has_selection)
+        self.clear_queue_button.setEnabled(can_edit and bool(self.download_queue))
+
+    def move_queue_item(self, delta: int) -> None:
+        index = self.selected_queue_index()
+        if index is None:
+            return
+        new_index = index + delta
+        if new_index < 0 or new_index >= len(self.download_queue):
+            return
+        self.download_queue[index], self.download_queue[new_index] = self.download_queue[new_index], self.download_queue[index]
+        self.refresh_queue()
+        self.queue_list.setCurrentRow(new_index)
+
+    def remove_selected_queue_item(self) -> None:
+        index = self.selected_queue_index()
+        if index is None:
+            return
+        del self.download_queue[index]
+        self.refresh_queue()
+
+    def clear_queue(self) -> None:
+        self.download_queue.clear()
+        self.refresh_queue()
+
+    def add_urls_to_queue(self) -> None:
         urls = self.parse_urls()
         if not urls:
+            QMessageBox.warning(self, self.t("missing_url_title"), self.t("missing_url"))
+            return
+        output_dir = self.selected_output_dir_or_warn()
+        if output_dir is None:
+            return
+        if self.queue_worker and self.queue_worker.isRunning():
+            return
+        self.append_status(self.t("queue_building"))
+        self.add_queue_button.setEnabled(False)
+        self.queue_worker = QueueBuildWorker(urls, output_dir)
+        self.queue_worker.status.connect(self.append_status)
+        self.queue_worker.finished_ok.connect(self.queue_build_finished)
+        self.queue_worker.finished.connect(self.queue_build_cleanup)
+        self.queue_worker.start()
+
+    def queue_build_finished(self, tasks: list[QueueTask], errors: list[str]) -> None:
+        self.download_queue.extend(tasks)
+        if tasks:
+            self.append_status(self.t("queue_added").format(count=len(tasks)))
+        for error in errors:
+            self.append_status(f"{self.t('queue_item_failed')}: {friendly_error(error, self.language)}")
+        self.refresh_queue()
+
+    def queue_build_cleanup(self) -> None:
+        if self.queue_worker:
+            self.queue_worker.deleteLater()
+            self.queue_worker = None
+        self.add_queue_button.setEnabled(not bool(self.worker and self.worker.isRunning()))
+
+    def update_queue_task(self, index: int, status: str, title: str, error: str) -> None:
+        if index < 0 or index >= len(self.download_queue):
+            return
+        task = self.download_queue[index]
+        task.status = status
+        if title:
+            task.title = title
+        task.error = error
+        self.refresh_queue()
+
+    def start_download(self) -> None:
+        tasks = [QueueTask(task.url, task.title, "waiting", "") for task in self.download_queue]
+        if not tasks:
+            tasks = [QueueTask(url=url) for url in self.parse_urls()]
+        if not tasks:
             QMessageBox.warning(self, self.t("missing_url_title"), self.t("missing_url"))
             return
 
@@ -875,9 +1093,9 @@ class MainWindow(QMainWindow):
         if output_dir is None:
             return
         mode = self.mode_combo.currentData()
-        has_playlist = any(is_playlist_url(url) for url in urls)
-        if len(urls) == 1 and not is_playlist_url(urls[0]):
-            info = self.video_info_for_start(urls[0], output_dir)
+        has_playlist = any(is_playlist_url(task.url) for task in tasks)
+        if len(tasks) == 1 and not is_playlist_url(tasks[0].url):
+            info = self.video_info_for_start(tasks[0].url, output_dir)
             if info is None:
                 return
 
@@ -892,13 +1110,15 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_label.setText(self.t("progress_waiting"))
         self.append_status(f"{self.t('output_folder_line')}: {output_dir}")
-        if len(urls) > 1 or has_playlist:
+        if len(tasks) > 1 or has_playlist:
             self.append_status(self.t("batch_auto_number"))
+        self.download_queue = tasks
+        self.refresh_queue()
         self.set_running(True)
         self.save_settings()
 
         self.worker = DownloadWorker(
-            urls,
+            tasks,
             output_dir,
             mode,
             file_exists_action,
@@ -914,6 +1134,7 @@ class MainWindow(QMainWindow):
             self.t("playlist_skip_summary"),
         )
         self.worker.status.connect(self.append_status)
+        self.worker.task_updated.connect(self.update_queue_task)
         self.worker.finished_ok.connect(self.download_finished)
         self.worker.failed.connect(self.download_failed)
         self.worker.finished.connect(lambda worker=self.worker: self.cleanup_worker(worker))
@@ -1029,6 +1250,10 @@ class MainWindow(QMainWindow):
 
     def download_failed(self, message: str) -> None:
         if "cancelled" in message.lower() or "canceled" in message.lower():
+            for task in self.download_queue:
+                if task.status in ("waiting", "downloading"):
+                    task.status = "canceled"
+            self.refresh_queue()
             self.append_status(self.t("cancelled"))
             self.progress_label.setText(self.t("cancelled"))
             self.set_running(False)
@@ -1040,6 +1265,7 @@ class MainWindow(QMainWindow):
     def cleanup_worker(self, worker: DownloadWorker) -> None:
         if self.worker is worker:
             self.worker = None
+        self.update_queue_buttons()
         worker.deleteLater()
 
     def add_history(self, info: VideoInfo, url: str, paths: list[str]) -> None:
@@ -1163,6 +1389,7 @@ class MainWindow(QMainWindow):
 
     def set_running(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
+        self.add_queue_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
         self.url_input.setEnabled(not running)
         self.browse_button.setEnabled(not running)
@@ -1170,6 +1397,7 @@ class MainWindow(QMainWindow):
         self.language_combo.setEnabled(not running)
         self.skip_downloaded_checkbox.setEnabled(not running)
         self.update_quality_controls(not running)
+        self.update_queue_buttons()
 
     def save_settings(self) -> None:
         self.settings.setValue("output_dir", str(self.current_output_dir()))

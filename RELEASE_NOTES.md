@@ -1,8 +1,15 @@
-# YouTube Simple Downloader v0.4.1
+# YouTube Simple Downloader v0.5.0
 
-Patch release adding the app icon.
+Feature release adding download queue management.
 
 ## Features
+
+- Added a visible download queue.
+- Added Add to Queue, Move Up, Move Down, Remove, and Clear Queue actions.
+- Playlist URLs can be expanded into queue items before downloading.
+- Queue items update status while downloading: Waiting, Downloading, Completed, Failed, Skipped, or Canceled.
+
+## v0.4.1 Features
 
 - Added a custom application icon for the EXE, GUI window, installer, Start Menu shortcut, and optional desktop shortcut.
 
