@@ -11,6 +11,9 @@ Download public YouTube video URLs or playlist URLs as MP3, MP4, or both.
 - Download queue supports adding URLs, expanding playlists, moving items up/down, removing items, and clearing the queue before starting.
 - Failed queue items can be retried without re-running completed items.
 - Optional automatic retries: none, 1, 2, or 3 retries per item.
+- Automatic folder grouping: no grouping, by download mode, by channel, by date, or by playlist.
+- Playlist grouping creates one folder per playlist, while single videos stay in the selected output folder.
+- Filename formats: title, channel - title, playlist number - title, upload date - title, or custom.
 - Batch mode downloads multiple URLs sequentially and continues after individual URL failures.
 - Playlist mode expands videos into the download queue before downloading.
 - Download MP3, MP4, or MP3 + MP4.
@@ -24,7 +27,7 @@ Download public YouTube video URLs or playlist URLs as MP3, MP4, or both.
 - Supports Traditional Chinese and English UI.
 - Can play a completion notification when downloads finish.
 - Includes one-click clear URL and clear status buttons.
-- Remembers the last output folder, download mode, quality settings, auto retry setting, language, notification setting, and window size.
+- Remembers the last output folder, download mode, quality settings, output naming settings, auto retry setting, language, notification setting, and window size.
 - Uses `imageio-ffmpeg` to provide FFmpeg without a separate external FFmpeg install.
 
 ## Setup
@@ -54,6 +57,12 @@ Paste one video URL to see a preview, add video or playlist URLs to the queue, r
 ```
 
 For a faster technical check, add `--test-seconds 10`.
+
+Output naming smoke options:
+
+```powershell
+.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/playlist?list=PLAYLIST_ID" --mode mp3 --folder-rule playlist --filename-rule playlist_index_title
+```
 
 Quality options:
 

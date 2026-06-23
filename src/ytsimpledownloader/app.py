@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .downloader import DownloadCancelled, SingleVideoDownloader, VideoInfo, extract_video_id, is_playlist_url
+from .downloader import DownloadCancelled, OutputOptions, SingleVideoDownloader, VideoInfo, extract_video_id, is_playlist_url
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 
 
@@ -52,6 +52,8 @@ class QueueTask:
     last_error: str = ""
     friendly_error: str = ""
     queue_index: int = -1
+    playlist_title: str = ""
+    playlist_index: int | None = None
 
 
 TEXT = {
@@ -65,6 +67,19 @@ TEXT = {
         "language": "語言",
         "mp3_quality": "MP3 品質",
         "mp4_quality": "MP4 畫質",
+        "folder_rule": "分類方式",
+        "filename_rule": "檔名格式",
+        "custom_template": "自訂檔名",
+        "folder_none": "不分類",
+        "folder_mode": "依下載模式",
+        "folder_channel": "依頻道",
+        "folder_date": "依日期",
+        "folder_playlist": "依播放清單",
+        "filename_title": "標題",
+        "filename_channel_title": "頻道 - 標題",
+        "filename_playlist_index_title": "播放清單序號 - 標題",
+        "filename_upload_date_title": "上傳日期 - 標題",
+        "filename_custom": "自訂",
         "notify": "下載完成時提示",
         "start": "開始",
         "cancel": "取消",
@@ -167,6 +182,19 @@ TEXT = {
         "language": "Language",
         "mp3_quality": "MP3 Quality",
         "mp4_quality": "MP4 Quality",
+        "folder_rule": "Folder Rule",
+        "filename_rule": "Filename Format",
+        "custom_template": "Custom Filename",
+        "folder_none": "No grouping",
+        "folder_mode": "By download mode",
+        "folder_channel": "By channel",
+        "folder_date": "By date",
+        "folder_playlist": "By playlist",
+        "filename_title": "Title",
+        "filename_channel_title": "Channel - Title",
+        "filename_playlist_index_title": "Playlist number - Title",
+        "filename_upload_date_title": "Upload date - Title",
+        "filename_custom": "Custom",
         "notify": "Notify when complete",
         "start": "Start",
         "cancel": "Cancel",
@@ -266,14 +294,15 @@ class PreviewWorker(QThread):
     finished_ok = Signal(object, bytes)
     failed = Signal(str)
 
-    def __init__(self, url: str, output_dir: Path) -> None:
+    def __init__(self, url: str, output_dir: Path, output_options: OutputOptions) -> None:
         super().__init__()
         self.url = url
         self.output_dir = output_dir
+        self.output_options = output_options
 
     def run(self) -> None:
         try:
-            downloader = SingleVideoDownloader(self.output_dir)
+            downloader = SingleVideoDownloader(self.output_dir, output_options=self.output_options)
             info = downloader.fetch_video_info(self.url)
             thumbnail = b""
             if info.thumbnail_url:
@@ -306,7 +335,15 @@ class QueueBuildWorker(QThread):
                 except Exception as exc:
                     errors.append(f"{url}: {exc}")
                     continue
-                tasks.extend(QueueTask(url=item_url, title=item_url) for item_url in playlist.urls)
+                tasks.extend(
+                    QueueTask(
+                        url=item_url,
+                        title=item_url,
+                        playlist_title=playlist.title,
+                        playlist_index=index,
+                    )
+                    for index, item_url in enumerate(playlist.urls, start=1)
+                )
                 self.status.emit(f"Playlist loaded: {playlist.title} ({len(playlist.urls)} videos)")
             else:
                 tasks.append(QueueTask(url=url, title=url))
@@ -324,6 +361,8 @@ def copy_queue_task(task: QueueTask) -> QueueTask:
         last_error=task.last_error,
         friendly_error=task.friendly_error,
         queue_index=task.queue_index,
+        playlist_title=task.playlist_title,
+        playlist_index=task.playlist_index,
     )
 
 
@@ -341,6 +380,7 @@ class DownloadWorker(QThread):
         file_exists_action: str,
         mp3_quality: str,
         mp4_quality: str,
+        output_options: OutputOptions,
         batch_item_template: str,
         batch_failed_label: str,
         fetching_playlist_template: str,
@@ -358,6 +398,7 @@ class DownloadWorker(QThread):
         self.file_exists_action = file_exists_action
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
+        self.output_options = output_options
         self.batch_item_template = batch_item_template
         self.batch_failed_label = batch_failed_label
         self.fetching_playlist_template = fetching_playlist_template
@@ -381,6 +422,7 @@ class DownloadWorker(QThread):
                 file_exists_action=self.file_exists_action,
                 mp3_quality=self.mp3_quality,
                 mp4_quality=self.mp4_quality,
+                output_options=self.output_options,
             )
             entries = []
             task_items = []
@@ -420,7 +462,15 @@ class DownloadWorker(QThread):
                         )
                         self.status.emit(f"{self.batch_failed_label}: {url} - {exc}")
                     else:
-                        task_items.extend(QueueTask(url=item_url, title=item_url) for item_url in playlist.urls)
+                        task_items.extend(
+                            QueueTask(
+                                url=item_url,
+                                title=item_url,
+                                playlist_title=playlist.title,
+                                playlist_index=playlist_index,
+                            )
+                            for playlist_index, item_url in enumerate(playlist.urls, start=1)
+                        )
                         self.status.emit(
                             self.playlist_loaded_template.format(title=playlist.title, count=len(playlist.urls))
                         )
@@ -478,12 +528,17 @@ class DownloadWorker(QThread):
                             )
                             break
 
-                        info = downloader.fetch_video_info(url)
+                        info = downloader.fetch_video_info(url, task.playlist_title, task.playlist_index)
                         self.task_updated.emit(queue_index, "downloading", info.title, "", task.attempts, "")
                         result_items = list(existing_results)
                         download_mode = download_mode_for_missing_modes(missing_modes)
                         if download_mode:
-                            results = downloader.download(url, download_mode)
+                            results = downloader.download(
+                                url,
+                                download_mode,
+                                task.playlist_title,
+                                task.playlist_index,
+                            )
                             for result in results:
                                 result_items.append((result.mode, str(result.path), result.skipped))
                                 if video_id and not result.skipped and result.path.exists():
@@ -722,6 +777,9 @@ class MainWindow(QMainWindow):
         self.language_label = QLabel()
         self.mp3_quality_label = QLabel()
         self.mp4_quality_label = QLabel()
+        self.folder_rule_label = QLabel()
+        self.filename_rule_label = QLabel()
+        self.custom_template_label = QLabel()
         self.retry_label = QLabel()
         self.preview_header = QLabel()
         self.queue_header = QLabel()
@@ -773,6 +831,28 @@ class MainWindow(QMainWindow):
         if mp4_index >= 0:
             self.mp4_quality_combo.setCurrentIndex(mp4_index)
         self.mode_combo.currentIndexChanged.connect(self.handle_mode_changed)
+
+        self.folder_rule_combo = QComboBox()
+        for value in ("none", "mode", "channel", "date", "playlist"):
+            self.folder_rule_combo.addItem("", value)
+        saved_folder_rule = self.settings.value("folder_rule", "none")
+        folder_rule_index = self.folder_rule_combo.findData(saved_folder_rule)
+        if folder_rule_index >= 0:
+            self.folder_rule_combo.setCurrentIndex(folder_rule_index)
+        self.folder_rule_combo.currentIndexChanged.connect(self.handle_output_options_changed)
+
+        self.filename_rule_combo = QComboBox()
+        for value in ("title", "channel_title", "playlist_index_title", "upload_date_title", "custom"):
+            self.filename_rule_combo.addItem("", value)
+        saved_filename_rule = self.settings.value("filename_rule", "title")
+        filename_rule_index = self.filename_rule_combo.findData(saved_filename_rule)
+        if filename_rule_index >= 0:
+            self.filename_rule_combo.setCurrentIndex(filename_rule_index)
+        self.filename_rule_combo.currentIndexChanged.connect(self.handle_output_options_changed)
+
+        self.custom_template_input = QLineEdit(str(self.settings.value("custom_template", "")))
+        self.custom_template_input.setPlaceholderText("%(title).200B [%(id)s].%(ext)s")
+        self.custom_template_input.textChanged.connect(self.handle_output_options_changed)
 
         self.notify_checkbox = QCheckBox()
         self.notify_checkbox.setChecked(str(self.settings.value("notify_complete", "true")).lower() != "false")
@@ -886,12 +966,18 @@ class MainWindow(QMainWindow):
         form.addWidget(self.mp3_quality_combo, 2, 3)
         form.addWidget(self.mp4_quality_label, 2, 4)
         form.addWidget(self.mp4_quality_combo, 2, 5)
-        form.addWidget(self.language_label, 3, 0)
-        form.addWidget(self.language_combo, 3, 1)
-        form.addWidget(self.notify_checkbox, 3, 2, 1, 2)
-        form.addWidget(self.skip_downloaded_checkbox, 3, 4, 1, 2)
-        form.addWidget(self.retry_label, 4, 0)
-        form.addWidget(self.retry_combo, 4, 1)
+        form.addWidget(self.folder_rule_label, 3, 0)
+        form.addWidget(self.folder_rule_combo, 3, 1)
+        form.addWidget(self.filename_rule_label, 3, 2)
+        form.addWidget(self.filename_rule_combo, 3, 3)
+        form.addWidget(self.custom_template_label, 3, 4)
+        form.addWidget(self.custom_template_input, 3, 5)
+        form.addWidget(self.language_label, 4, 0)
+        form.addWidget(self.language_combo, 4, 1)
+        form.addWidget(self.notify_checkbox, 4, 2, 1, 2)
+        form.addWidget(self.skip_downloaded_checkbox, 4, 4, 1, 2)
+        form.addWidget(self.retry_label, 5, 0)
+        form.addWidget(self.retry_combo, 5, 1)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.add_queue_button)
@@ -965,6 +1051,21 @@ class MainWindow(QMainWindow):
         self.language_label.setText(self.t("language"))
         self.mp3_quality_label.setText(self.t("mp3_quality"))
         self.mp4_quality_label.setText(self.t("mp4_quality"))
+        self.folder_rule_label.setText(self.t("folder_rule"))
+        self.filename_rule_label.setText(self.t("filename_rule"))
+        self.custom_template_label.setText(self.t("custom_template"))
+        for index, key in enumerate(("folder_none", "folder_mode", "folder_channel", "folder_date", "folder_playlist")):
+            self.folder_rule_combo.setItemText(index, self.t(key))
+        for index, key in enumerate(
+            (
+                "filename_title",
+                "filename_channel_title",
+                "filename_playlist_index_title",
+                "filename_upload_date_title",
+                "filename_custom",
+            )
+        ):
+            self.filename_rule_combo.setItemText(index, self.t(key))
         self.retry_label.setText(self.t("auto_retry"))
         self.retry_combo.setItemText(0, self.t("retry_none"))
         self.retry_combo.setItemText(1, self.t("retry_once"))
@@ -997,6 +1098,7 @@ class MainWindow(QMainWindow):
         self.progress_label.setText(self.t("progress_waiting"))
         self.refresh_queue()
         self.refresh_history()
+        self.update_custom_template_controls()
 
     def change_language(self) -> None:
         self.language = self.language_combo.currentData()
@@ -1006,6 +1108,16 @@ class MainWindow(QMainWindow):
     def handle_mode_changed(self) -> None:
         self.update_quality_controls()
         self.save_settings()
+
+    def handle_output_options_changed(self, *_args) -> None:
+        self.update_custom_template_controls()
+        self.save_settings()
+        self.schedule_preview()
+
+    def update_custom_template_controls(self) -> None:
+        enabled = self.filename_rule_combo.currentData() == "custom" and self.filename_rule_combo.isEnabled()
+        self.custom_template_label.setEnabled(enabled)
+        self.custom_template_input.setEnabled(enabled)
 
     def update_quality_controls(self, base_enabled: bool | None = None) -> None:
         if base_enabled is None:
@@ -1077,7 +1189,7 @@ class MainWindow(QMainWindow):
 
         output_dir = self.current_output_dir()
         self.append_status(self.t("fetching_info"))
-        self.preview_worker = PreviewWorker(url, output_dir)
+        self.preview_worker = PreviewWorker(url, output_dir, self.output_options())
         self.preview_worker.finished_ok.connect(lambda info, thumbnail: self.preview_finished(url, info, thumbnail))
         self.preview_worker.failed.connect(self.preview_failed)
         self.preview_worker.start()
@@ -1217,6 +1329,13 @@ class MainWindow(QMainWindow):
     def current_max_retries(self) -> int:
         return int(self.retry_combo.currentData() or 0)
 
+    def output_options(self) -> OutputOptions:
+        return OutputOptions(
+            folder_rule=str(self.folder_rule_combo.currentData() or "none"),
+            filename_rule=str(self.filename_rule_combo.currentData() or "title"),
+            custom_template=self.custom_template_input.text().strip(),
+        )
+
     def reset_task_for_run(self, task: QueueTask, index: int, status: str = "waiting") -> None:
         task.status = status
         task.error = ""
@@ -1298,7 +1417,7 @@ class MainWindow(QMainWindow):
         if isinstance(retry_failed_only, bool) and retry_failed_only:
             tasks = [copy_queue_task(task) for task in self.download_queue]
         else:
-            tasks = [QueueTask(task.url, task.title) for task in self.download_queue]
+            tasks = [copy_queue_task(task) for task in self.download_queue]
             if not tasks:
                 tasks = [QueueTask(url=url) for url in self.parse_urls()]
             for index, task in enumerate(tasks):
@@ -1342,6 +1461,7 @@ class MainWindow(QMainWindow):
             file_exists_action,
             self.mp3_quality_combo.currentData(),
             self.mp4_quality_combo.currentData(),
+            self.output_options(),
             self.t("batch_item"),
             self.t("batch_item_failed"),
             self.t("fetching_playlist"),
@@ -1365,7 +1485,7 @@ class MainWindow(QMainWindow):
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            info = SingleVideoDownloader(output_dir).fetch_video_info(url)
+            info = SingleVideoDownloader(output_dir, output_options=self.output_options()).fetch_video_info(url)
         except Exception as exc:
             QMessageBox.warning(self, self.t("cannot_read_title"), friendly_error(str(exc), self.language))
             return None
@@ -1613,10 +1733,13 @@ class MainWindow(QMainWindow):
         self.url_input.setEnabled(not running)
         self.browse_button.setEnabled(not running)
         self.mode_combo.setEnabled(not running)
+        self.folder_rule_combo.setEnabled(not running)
+        self.filename_rule_combo.setEnabled(not running)
         self.language_combo.setEnabled(not running)
         self.skip_downloaded_checkbox.setEnabled(not running)
         self.retry_combo.setEnabled(not running)
         self.update_quality_controls(not running)
+        self.update_custom_template_controls()
         self.update_queue_buttons()
 
     def save_settings(self) -> None:
@@ -1624,6 +1747,9 @@ class MainWindow(QMainWindow):
         self.settings.setValue("mode", self.mode_combo.currentData())
         self.settings.setValue("mp3_quality", self.mp3_quality_combo.currentData())
         self.settings.setValue("mp4_quality", self.mp4_quality_combo.currentData())
+        self.settings.setValue("folder_rule", self.folder_rule_combo.currentData())
+        self.settings.setValue("filename_rule", self.filename_rule_combo.currentData())
+        self.settings.setValue("custom_template", self.custom_template_input.text().strip())
         self.settings.setValue("language", self.language)
         self.settings.setValue("notify_complete", "true" if self.notify_checkbox.isChecked() else "false")
         self.settings.setValue("skip_downloaded", "true" if self.skip_downloaded_checkbox.isChecked() else "false")

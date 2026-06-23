@@ -1,8 +1,17 @@
-# YouTube Simple Downloader v0.5.1
+# YouTube Simple Downloader v0.6.0
 
-Patch release adding failed item retry support.
+Feature release adding automatic folder grouping and filename formats.
 
 ## Features
+
+- Added folder grouping options: no grouping, by download mode, by channel, by date, or by playlist.
+- Playlist grouping creates a folder named after the playlist and stores that playlist's downloads inside it.
+- Single video downloads stay in the selected output folder when playlist grouping is selected.
+- Added filename format options: title, channel - title, playlist number - title, upload date - title, and custom.
+- Previewed MP3/MP4 output paths now use the same output template as the actual download path.
+- CLI smoke test now supports folder and filename rule options.
+
+## v0.5.1 Features
 
 - Added Retry Failed for queue items that end in the Failed state.
 - Added an Auto Retry setting: do not retry, retry 1 time, retry 2 times, or retry 3 times.

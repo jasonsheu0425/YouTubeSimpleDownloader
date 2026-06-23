@@ -23,6 +23,16 @@ Mp4Quality = Literal["best", "1080", "720", "480"]
 ProgressCallback = Callable[[str], None]
 
 
+@dataclass(frozen=True)
+class OutputOptions:
+    folder_rule: str = "none"
+    filename_rule: str = "title"
+    custom_template: str = ""
+
+
+DEFAULT_OUTPUT_OPTIONS = OutputOptions()
+
+
 class YtDlpLogger:
     def __init__(self, emit: ProgressCallback) -> None:
         self.emit = emit
@@ -115,6 +125,7 @@ class SingleVideoDownloader:
         file_exists_action: FileExistsAction = "number",
         mp3_quality: Mp3Quality = "192",
         mp4_quality: Mp4Quality = "best",
+        output_options: OutputOptions | None = None,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.progress_callback = progress_callback or (lambda _message: None)
@@ -123,9 +134,15 @@ class SingleVideoDownloader:
         self.file_exists_action = file_exists_action
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
+        self.output_options = output_options or DEFAULT_OUTPUT_OPTIONS
         self.ffmpeg_path = self._ensure_ffmpeg_exe()
 
-    def fetch_video_info(self, url: str) -> VideoInfo:
+    def fetch_video_info(
+        self,
+        url: str,
+        playlist_title: str = "",
+        playlist_index: int | None = None,
+    ) -> VideoInfo:
         clean_url = url.strip()
         if not clean_url:
             raise ValueError("URL is required.")
@@ -140,8 +157,8 @@ class SingleVideoDownloader:
             duration=info.get("duration"),
             thumbnail_url=info.get("thumbnail") or "",
             webpage_url=info.get("webpage_url") or clean_url,
-            mp3_path=self.expected_output_path(info, ".mp3"),
-            mp4_path=self.expected_output_path(info, ".mp4"),
+            mp3_path=self.expected_output_path(info, ".mp3", playlist_title, playlist_index),
+            mp4_path=self.expected_output_path(info, ".mp4", playlist_title, playlist_index),
         )
 
     def fetch_playlist_info(self, url: str) -> PlaylistInfo:
@@ -178,7 +195,13 @@ class SingleVideoDownloader:
             urls=urls,
         )
 
-    def download(self, url: str, mode: DownloadMode) -> list[DownloadResult]:
+    def download(
+        self,
+        url: str,
+        mode: DownloadMode,
+        playlist_title: str = "",
+        playlist_index: int | None = None,
+    ) -> list[DownloadResult]:
         clean_url = url.strip()
         if not clean_url:
             raise ValueError("URL is required.")
@@ -186,18 +209,26 @@ class SingleVideoDownloader:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         if mode == "mp3":
-            return [self.download_mp3(clean_url)]
+            return [self.download_mp3(clean_url, playlist_title, playlist_index)]
         if mode == "mp4":
-            return [self.download_mp4(clean_url)]
+            return [self.download_mp4(clean_url, playlist_title, playlist_index)]
         if mode == "both":
-            return [self.download_mp3(clean_url), self.download_mp4(clean_url)]
+            return [
+                self.download_mp3(clean_url, playlist_title, playlist_index),
+                self.download_mp4(clean_url, playlist_title, playlist_index),
+            ]
 
         raise ValueError(f"Unsupported download mode: {mode}")
 
-    def download_mp3(self, url: str) -> DownloadResult:
+    def download_mp3(
+        self,
+        url: str,
+        playlist_title: str = "",
+        playlist_index: int | None = None,
+    ) -> DownloadResult:
         self._emit("Starting MP3 download...")
         info = self._extract_metadata(url)
-        target_path, skipped = self._prepare_target(info, ".mp3")
+        target_path, skipped = self._prepare_target(info, ".mp3", playlist_title, playlist_index)
         if skipped:
             self._emit(f"MP3 skipped, file already exists: {target_path}")
             return DownloadResult("mp3", target_path, skipped=True)
@@ -216,14 +247,19 @@ class SingleVideoDownloader:
             },
             target_path,
         )
-        path = self._expected_path(info, ".mp3")
+        path = self._expected_path(info, ".mp3", target_path)
         self._emit(f"MP3 saved: {path}")
         return DownloadResult("mp3", path)
 
-    def download_mp4(self, url: str) -> DownloadResult:
+    def download_mp4(
+        self,
+        url: str,
+        playlist_title: str = "",
+        playlist_index: int | None = None,
+    ) -> DownloadResult:
         self._emit("Starting MP4 download...")
         info = self._extract_metadata(url)
-        target_path, skipped = self._prepare_target(info, ".mp4")
+        target_path, skipped = self._prepare_target(info, ".mp4", playlist_title, playlist_index)
         if skipped:
             self._emit(f"MP4 skipped, file already exists: {target_path}")
             return DownloadResult("mp4", target_path, skipped=True)
@@ -236,21 +272,35 @@ class SingleVideoDownloader:
             },
             target_path,
         )
-        path = self._expected_path(info, ".mp4")
+        path = self._expected_path(info, ".mp4", target_path)
         self._emit(f"MP4 saved: {path}")
         return DownloadResult("mp4", path)
 
-    def expected_output_path(self, info: dict, suffix: str) -> Path:
-        outtmpl = str(self.output_dir / "%(title).200B [%(id)s].%(ext)s")
-        with YoutubeDL({"outtmpl": outtmpl}) as ydl:
-            return Path(ydl.prepare_filename(info)).with_suffix(suffix)
+    def expected_output_path(
+        self,
+        info: dict,
+        suffix: str,
+        playlist_title: str = "",
+        playlist_index: int | None = None,
+    ) -> Path:
+        prepared_info = self._info_with_context(info, playlist_title, playlist_index)
+        outtmpl = self._output_template(suffix, playlist_title, playlist_index)
+        with YoutubeDL({"outtmpl": outtmpl, "windowsfilenames": True, "restrictfilenames": False}) as ydl:
+            return Path(ydl.prepare_filename(prepared_info)).with_suffix(suffix)
 
     def _extract_metadata(self, url: str) -> dict:
         with YoutubeDL(self._base_opts()) as ydl:
             return ydl.extract_info(url, download=False)
 
-    def _prepare_target(self, info: dict, suffix: str) -> tuple[Path, bool]:
-        target_path = self.expected_output_path(info, suffix)
+    def _prepare_target(
+        self,
+        info: dict,
+        suffix: str,
+        playlist_title: str = "",
+        playlist_index: int | None = None,
+    ) -> tuple[Path, bool]:
+        target_path = self.expected_output_path(info, suffix, playlist_title, playlist_index)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
         if not target_path.exists():
             return target_path, False
 
@@ -333,23 +383,69 @@ class SingleVideoDownloader:
         elif status == "finished" and filename:
             self._emit(f"Downloaded: {filename}")
 
-    def _expected_path(self, info: dict, suffix: str) -> Path:
+    def _expected_path(self, info: dict, suffix: str, target_path: Path) -> Path:
         requested_downloads = info.get("requested_downloads") or []
         for item in requested_downloads:
             filepath = item.get("filepath") or item.get("_filename")
             if filepath and Path(filepath).suffix.lower() == suffix:
                 return Path(filepath)
 
-        original = Path(YoutubeDL({"outtmpl": str(self.output_dir / "%(title).200B [%(id)s].%(ext)s")}).prepare_filename(info))
-        candidate = original.with_suffix(suffix)
-        if candidate.exists():
-            return candidate
+        if target_path.exists():
+            return target_path
 
-        matches = sorted(self.output_dir.glob(f"*{suffix}"), key=lambda item: item.stat().st_mtime, reverse=True)
+        matches = sorted(target_path.parent.glob(f"*{suffix}"), key=lambda item: item.stat().st_mtime, reverse=True)
         if matches:
             return matches[0]
 
-        return candidate
+        return target_path
+
+    def _info_with_context(self, info: dict, playlist_title: str, playlist_index: int | None) -> dict:
+        prepared = dict(info)
+        if playlist_title:
+            prepared["playlist_title"] = playlist_title
+        if playlist_index is not None:
+            prepared["playlist_index"] = playlist_index
+        return prepared
+
+    def _output_template(
+        self,
+        suffix: str,
+        playlist_title: str = "",
+        playlist_index: int | None = None,
+    ) -> str:
+        filename = self._filename_template(playlist_index)
+        folder = self._folder_template(suffix, playlist_title)
+        if folder:
+            return str(self.output_dir / folder / filename)
+        return str(self.output_dir / filename)
+
+    def _folder_template(self, suffix: str, playlist_title: str = "") -> str:
+        rule = self.output_options.folder_rule
+        if rule == "mode":
+            return "MP3" if suffix == ".mp3" else "MP4"
+        if rule == "channel":
+            return "%(uploader).100B"
+        if rule == "date":
+            return "%(upload_date)s"
+        if rule == "playlist" and playlist_title:
+            return "%(playlist_title).120B"
+        return ""
+
+    def _filename_template(self, playlist_index: int | None = None) -> str:
+        rule = self.output_options.filename_rule
+        if rule == "channel_title":
+            return "%(uploader).80B - %(title).160B [%(id)s].%(ext)s"
+        if rule == "playlist_index_title" and playlist_index is not None:
+            return "%(playlist_index)03d - %(title).180B [%(id)s].%(ext)s"
+        if rule == "upload_date_title":
+            return "%(upload_date)s - %(title).180B [%(id)s].%(ext)s"
+        if rule == "custom":
+            template = self.output_options.custom_template.strip()
+            if template:
+                if "%(ext)" not in template:
+                    template += ".%(ext)s"
+                return template
+        return "%(title).200B [%(id)s].%(ext)s"
 
     def _emit(self, message: str) -> None:
         self.progress_callback(message)
