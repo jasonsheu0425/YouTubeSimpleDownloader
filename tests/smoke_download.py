@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
         default="title",
     )
     parser.add_argument("--custom-template", default="")
+    parser.add_argument("--no-resume", action="store_true", help="Disable yt-dlp resume/continue behavior.")
     return parser.parse_args()
 
 
@@ -46,6 +47,7 @@ def main() -> int:
         mp3_quality=args.mp3_quality,
         mp4_quality=args.mp4_quality,
         output_options=OutputOptions(args.folder_rule, args.filename_rule, args.custom_template),
+        resume_downloads=not args.no_resume,
     )
     all_results = []
     failures = []

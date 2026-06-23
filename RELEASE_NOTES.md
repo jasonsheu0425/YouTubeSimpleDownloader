@@ -1,8 +1,16 @@
-# YouTube Simple Downloader v0.6.0
+# YouTube Simple Downloader v0.6.1
 
-Feature release adding automatic folder grouping and filename formats.
+Patch release adding an explicit resume setting.
 
 ## Features
+
+- Added a setting to keep unfinished files and let yt-dlp resume downloads when possible.
+- The downloader now explicitly enables yt-dlp continue mode and `.part` temporary files when resume is enabled.
+- Cancelling a download leaves the queue item as Canceled, so the same task can be run again with the same output template.
+- The status area explains the limitation: MP3 audio download can often resume, but FFmpeg post-processing may need to run again after interruption.
+- CLI smoke test now supports `--no-resume`.
+
+## v0.6.0 Features
 
 - Added folder grouping options: no grouping, by download mode, by channel, by date, or by playlist.
 - Playlist grouping creates a folder named after the playlist and stores that playlist's downloads inside it.

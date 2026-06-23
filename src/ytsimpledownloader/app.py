@@ -104,6 +104,9 @@ TEXT = {
         "retry_failed_empty": "目前沒有失敗項目可以重試。",
         "retry_failed_started": "準備重試失敗項目：{count} 個。",
         "retry_attempt": "重試 {attempt}/{max}: {url}",
+        "resume_downloads": "保留未完成檔案並嘗試續傳",
+        "resume_enabled_status": "續傳已啟用：會保留 .part 暫存檔並盡量續傳；MP3 若已進入 FFmpeg 轉檔階段，可能需要重新處理。",
+        "resume_disabled_status": "續傳已停用：如果同一檔案有未完成下載，下次會重新下載。",
         "queue_empty": "佇列是空的。",
         "queue_added": "已加入佇列：{count} 個項目。",
         "queue_building": "正在建立下載佇列...",
@@ -219,6 +222,9 @@ TEXT = {
         "retry_failed_empty": "There are no failed items to retry.",
         "retry_failed_started": "Retrying {count} failed item(s).",
         "retry_attempt": "Retry {attempt}/{max}: {url}",
+        "resume_downloads": "Keep unfinished files and try to resume",
+        "resume_enabled_status": "Resume is enabled: .part files are kept and yt-dlp will resume when possible. MP3 post-processing may need to run again after interruption.",
+        "resume_disabled_status": "Resume is disabled: unfinished downloads for the same output path will restart.",
         "queue_empty": "The queue is empty.",
         "queue_added": "Added {count} item(s) to the queue.",
         "queue_building": "Building download queue...",
@@ -381,6 +387,7 @@ class DownloadWorker(QThread):
         mp3_quality: str,
         mp4_quality: str,
         output_options: OutputOptions,
+        resume_downloads: bool,
         batch_item_template: str,
         batch_failed_label: str,
         fetching_playlist_template: str,
@@ -399,6 +406,7 @@ class DownloadWorker(QThread):
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
         self.output_options = output_options
+        self.resume_downloads = resume_downloads
         self.batch_item_template = batch_item_template
         self.batch_failed_label = batch_failed_label
         self.fetching_playlist_template = fetching_playlist_template
@@ -423,6 +431,7 @@ class DownloadWorker(QThread):
                 mp3_quality=self.mp3_quality,
                 mp4_quality=self.mp4_quality,
                 output_options=self.output_options,
+                resume_downloads=self.resume_downloads,
             )
             entries = []
             task_items = []
@@ -859,6 +868,9 @@ class MainWindow(QMainWindow):
         self.skip_downloaded_checkbox = QCheckBox()
         self.skip_downloaded_checkbox.setChecked(str(self.settings.value("skip_downloaded", "true")).lower() != "false")
         self.skip_downloaded_checkbox.stateChanged.connect(lambda _state: self.save_settings())
+        self.resume_checkbox = QCheckBox()
+        self.resume_checkbox.setChecked(str(self.settings.value("resume_downloads", "true")).lower() != "false")
+        self.resume_checkbox.stateChanged.connect(lambda _state: self.save_settings())
 
         self.retry_combo = QComboBox()
         self.retry_combo.addItem("", 0)
@@ -978,6 +990,7 @@ class MainWindow(QMainWindow):
         form.addWidget(self.skip_downloaded_checkbox, 4, 4, 1, 2)
         form.addWidget(self.retry_label, 5, 0)
         form.addWidget(self.retry_combo, 5, 1)
+        form.addWidget(self.resume_checkbox, 5, 2, 1, 4)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.add_queue_button)
@@ -1074,6 +1087,7 @@ class MainWindow(QMainWindow):
         self.browse_button.setText(self.t("browse"))
         self.notify_checkbox.setText(self.t("notify"))
         self.skip_downloaded_checkbox.setText(self.t("skip_downloaded"))
+        self.resume_checkbox.setText(self.t("resume_downloads"))
         self.add_queue_button.setText(self.t("add_queue"))
         self.start_button.setText(self.t("start"))
         self.cancel_button.setText(self.t("cancel"))
@@ -1447,6 +1461,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_label.setText(self.t("progress_waiting"))
         self.append_status(f"{self.t('output_folder_line')}: {output_dir}")
+        self.append_status(self.t("resume_enabled_status") if self.resume_checkbox.isChecked() else self.t("resume_disabled_status"))
         if len(tasks) > 1 or has_playlist:
             self.append_status(self.t("batch_auto_number"))
         self.download_queue = tasks
@@ -1462,6 +1477,7 @@ class MainWindow(QMainWindow):
             self.mp3_quality_combo.currentData(),
             self.mp4_quality_combo.currentData(),
             self.output_options(),
+            self.resume_checkbox.isChecked(),
             self.t("batch_item"),
             self.t("batch_item_failed"),
             self.t("fetching_playlist"),
@@ -1737,6 +1753,7 @@ class MainWindow(QMainWindow):
         self.filename_rule_combo.setEnabled(not running)
         self.language_combo.setEnabled(not running)
         self.skip_downloaded_checkbox.setEnabled(not running)
+        self.resume_checkbox.setEnabled(not running)
         self.retry_combo.setEnabled(not running)
         self.update_quality_controls(not running)
         self.update_custom_template_controls()
@@ -1753,6 +1770,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("language", self.language)
         self.settings.setValue("notify_complete", "true" if self.notify_checkbox.isChecked() else "false")
         self.settings.setValue("skip_downloaded", "true" if self.skip_downloaded_checkbox.isChecked() else "false")
+        self.settings.setValue("resume_downloads", "true" if self.resume_checkbox.isChecked() else "false")
         self.settings.setValue("max_retries", self.current_max_retries())
         self.settings.setValue("window_size", self.size())
 

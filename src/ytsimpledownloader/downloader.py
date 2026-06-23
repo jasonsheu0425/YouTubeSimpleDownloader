@@ -126,6 +126,7 @@ class SingleVideoDownloader:
         mp3_quality: Mp3Quality = "192",
         mp4_quality: Mp4Quality = "best",
         output_options: OutputOptions | None = None,
+        resume_downloads: bool = True,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.progress_callback = progress_callback or (lambda _message: None)
@@ -135,6 +136,7 @@ class SingleVideoDownloader:
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
         self.output_options = output_options or DEFAULT_OUTPUT_OPTIONS
+        self.resume_downloads = resume_downloads
         self.ffmpeg_path = self._ensure_ffmpeg_exe()
 
     def fetch_video_info(
@@ -339,6 +341,8 @@ class SingleVideoDownloader:
             "quiet": True,
             "noprogress": True,
             "no_warnings": False,
+            "continuedl": self.resume_downloads,
+            "nopart": False,
             "logger": YtDlpLogger(self._emit),
         }
         node_path = which("node")
