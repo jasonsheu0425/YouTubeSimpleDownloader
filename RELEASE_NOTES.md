@@ -1,4 +1,19 @@
-# YouTube Simple Downloader v0.6.1
+# YouTube Simple Downloader v0.6.2
+
+Patch release improving the desktop interface and correcting direct-download and queue behavior.
+
+## Changes
+
+- Reorganized the interface into numbered sections for input, settings, preview, queue, progress, and results/history/errors.
+- Added a dark desktop theme, clearer primary actions, result tabs, a URL paste button, and a version/status footer.
+- A single video URL now downloads directly without being inserted into the queue.
+- Multiple URLs still create a download queue automatically.
+- Duplicate videos are no longer added to the queue more than once.
+- Pressing Start again no longer resets completed queue items back to Waiting when the requested output already exists.
+- Changing from MP3 to MP4, or requesting a missing format in MP3 + MP4 mode, queues only the missing output.
+- Completed items are filtered before the worker starts, avoiding unnecessary repeated checks and numbered duplicate files.
+
+## v0.6.1 Features
 
 Patch release adding an explicit resume setting.
 
