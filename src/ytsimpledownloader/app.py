@@ -36,7 +36,16 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
-from .downloader import DownloadCancelled, OutputOptions, SingleVideoDownloader, VideoInfo, extract_video_id, is_playlist_url
+from .downloader import (
+    AUDIO_FORMATS,
+    VIDEO_FORMATS,
+    DownloadCancelled,
+    OutputOptions,
+    SingleVideoDownloader,
+    VideoInfo,
+    extract_video_id,
+    is_playlist_url,
+)
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 
 
@@ -68,6 +77,8 @@ TEXT = {
         "browse": "瀏覽",
         "mode": "下載模式",
         "language": "語言",
+        "audio_format": "音訊格式",
+        "video_format": "影片格式",
         "mp3_quality": "MP3 品質",
         "mp4_quality": "MP4 畫質",
         "folder_rule": "分類方式",
@@ -176,6 +187,7 @@ TEXT = {
         "error_limited": "YouTube 暫時限制請求，請稍候再試。",
         "error_unsupported": "不支援此網址。請貼上公開 YouTube 影片網址。",
         "error_ffmpeg": "FFmpeg 轉檔或合併失敗，請稍後重試或改用其他格式。",
+        "error_webm": "無法輸出 WEBM：目前來源格式或 FFmpeg 合併流程不支援此影片。請改用 MP4 或 MKV。",
         "error_permission": "檔案權限不足，請確認輸出資料夾可以寫入，或改選其他資料夾。",
         "error_path": "檔名或路徑可能太長或無效，請改短輸出路徑後再試。",
     },
@@ -187,6 +199,8 @@ TEXT = {
         "browse": "Browse",
         "mode": "Mode",
         "language": "Language",
+        "audio_format": "Audio Format",
+        "video_format": "Video Format",
         "mp3_quality": "MP3 Quality",
         "mp4_quality": "MP4 Quality",
         "folder_rule": "Folder Rule",
@@ -295,6 +309,7 @@ TEXT = {
         "error_limited": "YouTube is temporarily limiting requests. Please wait a bit and try again.",
         "error_unsupported": "Unsupported URL. Please paste public YouTube video URLs.",
         "error_ffmpeg": "FFmpeg conversion or merge failed. Please retry later or try another format.",
+        "error_webm": "Cannot output WEBM: this source format or FFmpeg merge flow is not supported for this video. Please use MP4 or MKV.",
         "error_permission": "File permission was denied. Please check the output folder or choose another folder.",
         "error_path": "The filename or path may be too long or invalid. Please try a shorter output folder.",
     },
@@ -305,15 +320,29 @@ class PreviewWorker(QThread):
     finished_ok = Signal(object, bytes)
     failed = Signal(str)
 
-    def __init__(self, url: str, output_dir: Path, output_options: OutputOptions) -> None:
+    def __init__(
+        self,
+        url: str,
+        output_dir: Path,
+        output_options: OutputOptions,
+        audio_format: str,
+        video_format: str,
+    ) -> None:
         super().__init__()
         self.url = url
         self.output_dir = output_dir
         self.output_options = output_options
+        self.audio_format = audio_format
+        self.video_format = video_format
 
     def run(self) -> None:
         try:
-            downloader = SingleVideoDownloader(self.output_dir, output_options=self.output_options)
+            downloader = SingleVideoDownloader(
+                self.output_dir,
+                output_options=self.output_options,
+                audio_format=self.audio_format,
+                video_format=self.video_format,
+            )
             info = downloader.fetch_video_info(self.url)
             thumbnail = b""
             if info.thumbnail_url:
@@ -391,6 +420,8 @@ class DownloadWorker(QThread):
         file_exists_action: str,
         mp3_quality: str,
         mp4_quality: str,
+        audio_format: str,
+        video_format: str,
         output_options: OutputOptions,
         resume_downloads: bool,
         batch_item_template: str,
@@ -410,6 +441,8 @@ class DownloadWorker(QThread):
         self.file_exists_action = file_exists_action
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
+        self.audio_format = audio_format
+        self.video_format = video_format
         self.output_options = output_options
         self.resume_downloads = resume_downloads
         self.batch_item_template = batch_item_template
@@ -435,6 +468,8 @@ class DownloadWorker(QThread):
                 file_exists_action=self.file_exists_action,
                 mp3_quality=self.mp3_quality,
                 mp4_quality=self.mp4_quality,
+                audio_format=self.audio_format,
+                video_format=self.video_format,
                 output_options=self.output_options,
                 resume_downloads=self.resume_downloads,
             )
@@ -511,7 +546,11 @@ class DownloadWorker(QThread):
                         existing = self.downloaded_by_video_id.get(video_id, {}) if self.skip_downloaded and video_id else {}
                         existing_results = []
                         for requested_mode in requested_modes:
-                            existing_path = existing.get(requested_mode)
+                            existing_path = existing.get(download_key_for_mode(
+                                requested_mode,
+                                self.audio_format,
+                                self.video_format,
+                            ))
                             if existing_path and Path(existing_path).exists():
                                 existing_results.append((requested_mode, existing_path, True))
 
@@ -556,7 +595,12 @@ class DownloadWorker(QThread):
                             for result in results:
                                 result_items.append((result.mode, str(result.path), result.skipped))
                                 if video_id and not result.skipped and result.path.exists():
-                                    self.downloaded_by_video_id.setdefault(video_id, {})[result.mode] = str(result.path)
+                                    output_key = download_key_for_mode(
+                                        result.mode,
+                                        self.audio_format,
+                                        self.video_format,
+                                    )
+                                    self.downloaded_by_video_id.setdefault(video_id, {})[output_key] = str(result.path)
                                     self.downloaded_by_video_id[video_id]["_title"] = info.title
                     except DownloadCancelled:
                         raise
@@ -662,6 +706,13 @@ def error_key(message: str) -> str:
         return "error_limited"
     if "unsupported url" in lower:
         return "error_unsupported"
+    if "webm" in lower and (
+        "requested format is not available" in lower
+        or "merge" in lower
+        or "ffmpeg" in lower
+        or "not available" in lower
+    ):
+        return "error_webm"
     if "ffmpeg" in lower or "postprocessing" in lower or "conversion failed" in lower or "merge" in lower:
         return "error_ffmpeg"
     if (
@@ -717,13 +768,32 @@ def download_mode_for_missing_modes(missing_modes: list[str]) -> str:
     return ""
 
 
+def download_key_for_mode(mode: str, audio_format: str, video_format: str) -> str:
+    if mode == "mp3":
+        return f"audio:{audio_format}"
+    if mode == "mp4":
+        return f"video:{video_format}"
+    return mode
+
+
+def display_label_for_result(mode: str, path: str) -> str:
+    suffix = Path(str(path)).suffix.lower().lstrip(".")
+    if suffix:
+        return suffix.upper()
+    if mode == "mp3":
+        return "AUDIO"
+    if mode == "mp4":
+        return "VIDEO"
+    return mode.upper()
+
+
 def modes_for_paths(paths: list[str]) -> list[str]:
     modes = []
     for raw_path in paths:
-        suffix = Path(str(raw_path)).suffix.lower()
-        if suffix == ".mp3" and "mp3" not in modes:
+        suffix = Path(str(raw_path)).suffix.lower().lstrip(".")
+        if suffix in AUDIO_FORMATS and "mp3" not in modes:
             modes.append("mp3")
-        elif suffix == ".mp4" and "mp4" not in modes:
+        elif suffix in VIDEO_FORMATS and "mp4" not in modes:
             modes.append("mp4")
     return modes
 
@@ -754,14 +824,20 @@ def history_downloads_by_video_id() -> dict[str, dict[str, str]]:
         if title and "_title" not in bucket:
             bucket["_title"] = title
 
+        item_audio_format = str(item.get("audio_format") or "").lower()
+        item_video_format = str(item.get("video_format") or "").lower()
+
         for raw_path in item.get("paths") or []:
             path = Path(str(raw_path))
             if not path.exists():
                 continue
-            if path.suffix.lower() == ".mp3":
-                bucket["mp3"] = str(path)
-            elif path.suffix.lower() == ".mp4":
-                bucket["mp4"] = str(path)
+            suffix = path.suffix.lower().lstrip(".")
+            if suffix in AUDIO_FORMATS:
+                audio_format = item_audio_format if item_audio_format in AUDIO_FORMATS else suffix
+                bucket[f"audio:{audio_format}"] = str(path)
+            elif suffix in VIDEO_FORMATS:
+                video_format = item_video_format if item_video_format in VIDEO_FORMATS else suffix
+                bucket[f"video:{video_format}"] = str(path)
     return downloads
 
 
@@ -774,13 +850,16 @@ def task_has_downloaded_modes(
     task: QueueTask,
     mode: str,
     downloaded_by_video_id: dict[str, dict[str, str]],
+    audio_format: str,
+    video_format: str,
 ) -> bool:
     video_id = extract_video_id(task.url)
     if not video_id:
         return False
     existing = downloaded_by_video_id.get(video_id, {})
     return all(
-        bool(existing.get(requested_mode)) and Path(existing[requested_mode]).exists()
+        bool(existing.get(download_key_for_mode(requested_mode, audio_format, video_format)))
+        and Path(existing[download_key_for_mode(requested_mode, audio_format, video_format)]).exists()
         for requested_mode in modes_for_download(mode)
     )
 
@@ -802,6 +881,7 @@ class MainWindow(QMainWindow):
         self.download_queue: list[QueueTask] = []
         self.current_info: VideoInfo | None = None
         self.current_info_url = ""
+        self.current_info_key = ""
 
         self.resize(self.settings.value("window_size", self.size()))
 
@@ -809,6 +889,8 @@ class MainWindow(QMainWindow):
         self.output_label = QLabel()
         self.mode_label = QLabel()
         self.language_label = QLabel()
+        self.audio_format_label = QLabel()
+        self.video_format_label = QLabel()
         self.mp3_quality_label = QLabel()
         self.mp4_quality_label = QLabel()
         self.folder_rule_label = QLabel()
@@ -849,6 +931,14 @@ class MainWindow(QMainWindow):
         if saved_index >= 0:
             self.mode_combo.setCurrentIndex(saved_index)
 
+        self.audio_format_combo = QComboBox()
+        for value in AUDIO_FORMATS:
+            self.audio_format_combo.addItem(value.upper(), value)
+        saved_audio_format = str(self.settings.value("audio_format", "mp3")).lower()
+        audio_format_index = self.audio_format_combo.findData(saved_audio_format)
+        if audio_format_index >= 0:
+            self.audio_format_combo.setCurrentIndex(audio_format_index)
+
         self.mp3_quality_combo = QComboBox()
         for value in ("128", "192", "256", "320"):
             self.mp3_quality_combo.addItem(f"{value}K", value)
@@ -856,6 +946,14 @@ class MainWindow(QMainWindow):
         mp3_index = self.mp3_quality_combo.findData(saved_mp3)
         if mp3_index >= 0:
             self.mp3_quality_combo.setCurrentIndex(mp3_index)
+
+        self.video_format_combo = QComboBox()
+        for value in VIDEO_FORMATS:
+            self.video_format_combo.addItem(value.upper(), value)
+        saved_video_format = str(self.settings.value("video_format", "mp4")).lower()
+        video_format_index = self.video_format_combo.findData(saved_video_format)
+        if video_format_index >= 0:
+            self.video_format_combo.setCurrentIndex(video_format_index)
 
         self.mp4_quality_combo = QComboBox()
         for label, value in (("Best", "best"), ("1080p", "1080"), ("720p", "720"), ("480p", "480")):
@@ -865,6 +963,8 @@ class MainWindow(QMainWindow):
         if mp4_index >= 0:
             self.mp4_quality_combo.setCurrentIndex(mp4_index)
         self.mode_combo.currentIndexChanged.connect(self.handle_mode_changed)
+        self.audio_format_combo.currentIndexChanged.connect(self.handle_format_changed)
+        self.video_format_combo.currentIndexChanged.connect(self.handle_format_changed)
 
         self.folder_rule_combo = QComboBox()
         for value in ("none", "mode", "channel", "date", "playlist"):
@@ -1062,16 +1162,20 @@ class MainWindow(QMainWindow):
         settings_layout.setVerticalSpacing(8)
         settings_layout.addWidget(self.mode_label, 0, 0)
         settings_layout.addWidget(self.mode_combo, 1, 0)
-        settings_layout.addWidget(self.mp3_quality_label, 0, 1)
-        settings_layout.addWidget(self.mp3_quality_combo, 1, 1)
-        settings_layout.addWidget(self.mp4_quality_label, 0, 2)
-        settings_layout.addWidget(self.mp4_quality_combo, 1, 2)
-        settings_layout.addWidget(self.folder_rule_label, 0, 3)
-        settings_layout.addWidget(self.folder_rule_combo, 1, 3)
-        settings_layout.addWidget(self.filename_rule_label, 0, 4)
-        settings_layout.addWidget(self.filename_rule_combo, 1, 4)
-        settings_layout.addWidget(self.custom_template_label, 0, 5)
-        settings_layout.addWidget(self.custom_template_input, 1, 5)
+        settings_layout.addWidget(self.audio_format_label, 0, 1)
+        settings_layout.addWidget(self.audio_format_combo, 1, 1)
+        settings_layout.addWidget(self.mp3_quality_label, 0, 2)
+        settings_layout.addWidget(self.mp3_quality_combo, 1, 2)
+        settings_layout.addWidget(self.video_format_label, 0, 3)
+        settings_layout.addWidget(self.video_format_combo, 1, 3)
+        settings_layout.addWidget(self.mp4_quality_label, 0, 4)
+        settings_layout.addWidget(self.mp4_quality_combo, 1, 4)
+        settings_layout.addWidget(self.folder_rule_label, 0, 5)
+        settings_layout.addWidget(self.folder_rule_combo, 1, 5)
+        settings_layout.addWidget(self.filename_rule_label, 0, 6)
+        settings_layout.addWidget(self.filename_rule_combo, 1, 6)
+        settings_layout.addWidget(self.custom_template_label, 0, 7)
+        settings_layout.addWidget(self.custom_template_input, 1, 7)
         settings_layout.addWidget(self.language_label, 2, 0)
         settings_layout.addWidget(self.language_combo, 3, 0)
         settings_layout.addWidget(self.retry_label, 2, 1)
@@ -1079,7 +1183,7 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.notify_checkbox, 3, 2)
         settings_layout.addWidget(self.skip_downloaded_checkbox, 3, 3)
         settings_layout.addWidget(self.resume_checkbox, 3, 4, 1, 2)
-        settings_layout.setColumnStretch(5, 2)
+        settings_layout.setColumnStretch(7, 2)
         settings_group_layout.addLayout(settings_layout)
 
         buttons = QHBoxLayout()
@@ -1352,6 +1456,8 @@ class MainWindow(QMainWindow):
         self.output_label.setText(self.t("output_folder"))
         self.mode_label.setText(self.t("mode"))
         self.language_label.setText(self.t("language"))
+        self.audio_format_label.setText(self.t("audio_format"))
+        self.video_format_label.setText(self.t("video_format"))
         self.mp3_quality_label.setText(self.t("mp3_quality"))
         self.mp4_quality_label.setText(self.t("mp4_quality"))
         self.folder_rule_label.setText(self.t("folder_rule"))
@@ -1427,6 +1533,14 @@ class MainWindow(QMainWindow):
     def handle_mode_changed(self) -> None:
         self.update_quality_controls()
         self.save_settings()
+        self.schedule_preview()
+
+    def handle_format_changed(self) -> None:
+        self.current_info = None
+        self.current_info_key = ""
+        self.update_quality_controls()
+        self.save_settings()
+        self.schedule_preview()
 
     def handle_output_options_changed(self, *_args) -> None:
         self.update_custom_template_controls()
@@ -1443,11 +1557,17 @@ class MainWindow(QMainWindow):
             base_enabled = self.mode_combo.isEnabled()
 
         mode = self.mode_combo.currentData()
-        mp3_enabled = base_enabled and mode in ("mp3", "both")
-        mp4_enabled = base_enabled and mode in ("mp4", "both")
+        audio_enabled = base_enabled and mode in ("mp3", "both")
+        video_enabled = base_enabled and mode in ("mp4", "both")
+        mp3_enabled = audio_enabled and self.audio_format_combo.currentData() == "mp3"
+        mp4_enabled = video_enabled
 
+        self.audio_format_label.setEnabled(audio_enabled)
+        self.audio_format_combo.setEnabled(audio_enabled)
         self.mp3_quality_label.setEnabled(mp3_enabled)
         self.mp3_quality_combo.setEnabled(mp3_enabled)
+        self.video_format_label.setEnabled(video_enabled)
+        self.video_format_combo.setEnabled(video_enabled)
         self.mp4_quality_label.setEnabled(mp4_enabled)
         self.mp4_quality_combo.setEnabled(mp4_enabled)
 
@@ -1464,6 +1584,26 @@ class MainWindow(QMainWindow):
 
     def current_output_dir(self) -> Path:
         return Path(self.output_input.text().strip() or DEFAULT_DOWNLOAD_DIR).expanduser()
+
+    def current_audio_format(self) -> str:
+        return str(self.audio_format_combo.currentData() or "mp3")
+
+    def current_video_format(self) -> str:
+        return str(self.video_format_combo.currentData() or "mp4")
+
+    def preview_context_key(self, url: str, output_dir: Path) -> str:
+        options = self.output_options()
+        return "|".join(
+            (
+                url.strip(),
+                str(output_dir),
+                options.folder_rule,
+                options.filename_rule,
+                options.custom_template,
+                self.current_audio_format(),
+                self.current_video_format(),
+            )
+        )
 
     def can_create_dir(self, path: Path) -> bool:
         try:
@@ -1507,23 +1647,35 @@ class MainWindow(QMainWindow):
         url = urls[0]
 
         output_dir = self.current_output_dir()
+        request_key = self.preview_context_key(url, output_dir)
         self.append_status(self.t("fetching_info"))
-        self.preview_worker = PreviewWorker(url, output_dir, self.output_options())
-        self.preview_worker.finished_ok.connect(lambda info, thumbnail: self.preview_finished(url, info, thumbnail))
+        self.preview_worker = PreviewWorker(
+            url,
+            output_dir,
+            self.output_options(),
+            self.current_audio_format(),
+            self.current_video_format(),
+        )
+        self.preview_worker.finished_ok.connect(
+            lambda info, thumbnail: self.preview_finished(url, info, thumbnail, request_key)
+        )
         self.preview_worker.failed.connect(self.preview_failed)
         self.preview_worker.start()
 
-    def preview_finished(self, url: str, info: VideoInfo, thumbnail: bytes) -> None:
-        if self.parse_urls() != [url]:
+    def preview_finished(self, url: str, info: VideoInfo, thumbnail: bytes, request_key: str = "") -> None:
+        current_key = self.preview_context_key(url, self.current_output_dir())
+        if self.parse_urls() != [url] or (request_key and request_key != current_key):
+            self.schedule_preview()
             return
 
         self.current_info = info
         self.current_info_url = url
+        self.current_info_key = current_key
         self.title_label.setText(f"{self.t('title')}: {info.title}")
         self.channel_label.setText(f"{self.t('channel')}: {info.uploader}")
         self.duration_label.setText(f"{self.t('duration')}: {format_duration(info.duration, self.t('unknown'))}")
-        self.mp3_path_label.setText(f"MP3: {info.mp3_path}")
-        self.mp4_path_label.setText(f"MP4: {info.mp4_path}")
+        self.mp3_path_label.setText(f"{info.audio_format.upper()}: {info.mp3_path}")
+        self.mp4_path_label.setText(f"{info.video_format.upper()}: {info.mp4_path}")
 
         pixmap = QPixmap()
         if thumbnail and pixmap.loadFromData(thumbnail):
@@ -1547,8 +1699,8 @@ class MainWindow(QMainWindow):
         self.title_label.setText(f"{self.t('title')}: -")
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
-        self.mp3_path_label.setText("MP3: -")
-        self.mp4_path_label.setText("MP4: -")
+        self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
+        self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
 
     def show_batch_preview(self, count: int) -> None:
         self.thumbnail_label.clear()
@@ -1556,8 +1708,8 @@ class MainWindow(QMainWindow):
         self.title_label.setText(self.t("batch_preview").format(count=count))
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
-        self.mp3_path_label.setText("MP3: -")
-        self.mp4_path_label.setText("MP4: -")
+        self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
+        self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
 
     def show_playlist_preview(self) -> None:
         self.thumbnail_label.clear()
@@ -1565,8 +1717,8 @@ class MainWindow(QMainWindow):
         self.title_label.setText(self.t("playlist_preview"))
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
-        self.mp3_path_label.setText("MP3: -")
-        self.mp4_path_label.setText("MP4: -")
+        self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
+        self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
 
     def paste_urls(self) -> None:
         text = QApplication.clipboard().text().strip()
@@ -1749,6 +1901,8 @@ class MainWindow(QMainWindow):
 
     def start_download(self, retry_failed_only: bool = False) -> None:
         mode = str(self.mode_combo.currentData())
+        audio_format = self.current_audio_format()
+        video_format = self.current_video_format()
         downloaded_by_video_id = history_downloads_by_video_id()
         skip_downloaded = self.skip_downloaded_checkbox.isChecked()
 
@@ -1756,7 +1910,13 @@ class MainWindow(QMainWindow):
             tasks = [copy_queue_task(task) for task in self.download_queue]
         elif self.download_queue:
             for index, task in enumerate(self.download_queue):
-                has_requested_outputs = task_has_downloaded_modes(task, mode, downloaded_by_video_id)
+                has_requested_outputs = task_has_downloaded_modes(
+                    task,
+                    mode,
+                    downloaded_by_video_id,
+                    audio_format,
+                    video_format,
+                )
                 keep_completed = task.status in ("completed", "skipped") and has_requested_outputs
                 if keep_completed or (skip_downloaded and has_requested_outputs):
                     task.status = "completed"
@@ -1779,7 +1939,13 @@ class MainWindow(QMainWindow):
 
             if len(urls) == 1 and not is_playlist_url(urls[0]):
                 direct_task = QueueTask(url=urls[0])
-                if skip_downloaded and task_has_downloaded_modes(direct_task, mode, downloaded_by_video_id):
+                if skip_downloaded and task_has_downloaded_modes(
+                    direct_task,
+                    mode,
+                    downloaded_by_video_id,
+                    audio_format,
+                    video_format,
+                ):
                     self.append_status(self.t("queue_no_pending"))
                     return
                 self.reset_task_for_run(direct_task, -1)
@@ -1788,7 +1954,13 @@ class MainWindow(QMainWindow):
                 unique_urls = list(dict.fromkeys(urls))
                 self.download_queue = [QueueTask(url=url) for url in unique_urls]
                 for index, task in enumerate(self.download_queue):
-                    if skip_downloaded and task_has_downloaded_modes(task, mode, downloaded_by_video_id):
+                    if skip_downloaded and task_has_downloaded_modes(
+                        task,
+                        mode,
+                        downloaded_by_video_id,
+                        audio_format,
+                        video_format,
+                    ):
                         task.status = "completed"
                         task.queue_index = index
                     else:
@@ -1837,6 +2009,8 @@ class MainWindow(QMainWindow):
             file_exists_action,
             self.mp3_quality_combo.currentData(),
             self.mp4_quality_combo.currentData(),
+            audio_format,
+            video_format,
             self.output_options(),
             self.resume_checkbox.isChecked(),
             self.t("batch_item"),
@@ -1857,19 +2031,25 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def video_info_for_start(self, url: str, output_dir: Path) -> VideoInfo | None:
-        if self.current_info and self.current_info_url == url:
+        request_key = self.preview_context_key(url, output_dir)
+        if self.current_info and self.current_info_url == url and self.current_info_key == request_key:
             return self.current_info
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            info = SingleVideoDownloader(output_dir, output_options=self.output_options()).fetch_video_info(url)
+            info = SingleVideoDownloader(
+                output_dir,
+                output_options=self.output_options(),
+                audio_format=self.current_audio_format(),
+                video_format=self.current_video_format(),
+            ).fetch_video_info(url)
         except Exception as exc:
             QMessageBox.warning(self, self.t("cannot_read_title"), friendly_error(str(exc), self.language))
             return None
         finally:
             QApplication.restoreOverrideCursor()
 
-        self.preview_finished(url, info, b"")
+        self.preview_finished(url, info, b"", request_key)
         return info
 
     def ask_file_exists_action(self, info: VideoInfo, mode: str) -> str | None:
@@ -1937,7 +2117,7 @@ class MainWindow(QMainWindow):
             for mode, path, skipped in results:
                 paths.append(path)
                 prefix = f"{entry.get('index')}. {title} - " if is_batch else ""
-                label = f"{prefix}{mode.upper()}: {path}"
+                label = f"{prefix}{display_label_for_result(mode, path)}: {path}"
                 if skipped:
                     label += f" ({self.t('skipped')})"
                 item = QListWidgetItem(label)
@@ -1996,6 +2176,8 @@ class MainWindow(QMainWindow):
                 "paths": paths,
                 "download_modes": modes_for_paths(paths),
                 "mode": self.mode_combo.currentText(),
+                "audio_format": self.current_audio_format(),
+                "video_format": self.current_video_format(),
                 "mp3_quality": self.mp3_quality_combo.currentText(),
                 "mp4_quality": self.mp4_quality_combo.currentText(),
             },
@@ -2123,6 +2305,8 @@ class MainWindow(QMainWindow):
     def save_settings(self) -> None:
         self.settings.setValue("output_dir", str(self.current_output_dir()))
         self.settings.setValue("mode", self.mode_combo.currentData())
+        self.settings.setValue("audio_format", self.current_audio_format())
+        self.settings.setValue("video_format", self.current_video_format())
         self.settings.setValue("mp3_quality", self.mp3_quality_combo.currentData())
         self.settings.setValue("mp4_quality", self.mp4_quality_combo.currentData())
         self.settings.setValue("folder_rule", self.folder_rule_combo.currentData())

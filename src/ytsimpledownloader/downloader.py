@@ -20,7 +20,12 @@ DownloadMode = Literal["mp3", "mp4", "both"]
 FileExistsAction = Literal["overwrite", "skip", "number"]
 Mp3Quality = Literal["128", "192", "256", "320"]
 Mp4Quality = Literal["best", "1080", "720", "480"]
+AudioFormat = Literal["mp3", "m4a", "opus", "wav", "flac"]
+VideoFormat = Literal["mp4", "mkv", "webm"]
 ProgressCallback = Callable[[str], None]
+
+AUDIO_FORMATS: tuple[str, ...] = ("mp3", "m4a", "opus", "wav", "flac")
+VIDEO_FORMATS: tuple[str, ...] = ("mp4", "mkv", "webm")
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,8 @@ class VideoInfo:
     webpage_url: str
     mp3_path: Path
     mp4_path: Path
+    audio_format: str = "mp3"
+    video_format: str = "mp4"
 
 
 @dataclass(frozen=True)
@@ -125,6 +132,8 @@ class SingleVideoDownloader:
         file_exists_action: FileExistsAction = "number",
         mp3_quality: Mp3Quality = "192",
         mp4_quality: Mp4Quality = "best",
+        audio_format: AudioFormat = "mp3",
+        video_format: VideoFormat = "mp4",
         output_options: OutputOptions | None = None,
         resume_downloads: bool = True,
     ) -> None:
@@ -135,6 +144,8 @@ class SingleVideoDownloader:
         self.file_exists_action = file_exists_action
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
+        self.audio_format = self._validate_audio_format(audio_format)
+        self.video_format = self._validate_video_format(video_format)
         self.output_options = output_options or DEFAULT_OUTPUT_OPTIONS
         self.resume_downloads = resume_downloads
         self.ffmpeg_path = self._ensure_ffmpeg_exe()
@@ -159,8 +170,10 @@ class SingleVideoDownloader:
             duration=info.get("duration"),
             thumbnail_url=info.get("thumbnail") or "",
             webpage_url=info.get("webpage_url") or clean_url,
-            mp3_path=self.expected_output_path(info, ".mp3", playlist_title, playlist_index),
-            mp4_path=self.expected_output_path(info, ".mp4", playlist_title, playlist_index),
+            mp3_path=self.expected_output_path(info, self._audio_suffix(), playlist_title, playlist_index),
+            mp4_path=self.expected_output_path(info, self._video_suffix(), playlist_title, playlist_index),
+            audio_format=self.audio_format,
+            video_format=self.video_format,
         )
 
     def fetch_playlist_info(self, url: str) -> PlaylistInfo:
@@ -228,29 +241,22 @@ class SingleVideoDownloader:
         playlist_title: str = "",
         playlist_index: int | None = None,
     ) -> DownloadResult:
-        self._emit("Starting MP3 download...")
+        label = self.audio_format.upper()
+        self._emit(f"Starting {label} audio download...")
         info = self._extract_metadata(url)
-        target_path, skipped = self._prepare_target(info, ".mp3", playlist_title, playlist_index)
+        suffix = self._audio_suffix()
+        target_path, skipped = self._prepare_target(info, suffix, playlist_title, playlist_index)
         if skipped:
-            self._emit(f"MP3 skipped, file already exists: {target_path}")
+            self._emit(f"{label} skipped, file already exists: {target_path}")
             return DownloadResult("mp3", target_path, skipped=True)
 
         info = self._run_yt_dlp(
             url,
-            {
-                "format": "bestaudio/best",
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": self.mp3_quality,
-                    }
-                ],
-            },
+            self._audio_options(),
             target_path,
         )
-        path = self._expected_path(info, ".mp3", target_path)
-        self._emit(f"MP3 saved: {path}")
+        path = self._expected_path(info, suffix, target_path)
+        self._emit(f"{label} saved: {path}")
         return DownloadResult("mp3", path)
 
     def download_mp4(
@@ -259,23 +265,25 @@ class SingleVideoDownloader:
         playlist_title: str = "",
         playlist_index: int | None = None,
     ) -> DownloadResult:
-        self._emit("Starting MP4 download...")
+        label = self.video_format.upper()
+        self._emit(f"Starting {label} video download...")
         info = self._extract_metadata(url)
-        target_path, skipped = self._prepare_target(info, ".mp4", playlist_title, playlist_index)
+        suffix = self._video_suffix()
+        target_path, skipped = self._prepare_target(info, suffix, playlist_title, playlist_index)
         if skipped:
-            self._emit(f"MP4 skipped, file already exists: {target_path}")
+            self._emit(f"{label} skipped, file already exists: {target_path}")
             return DownloadResult("mp4", target_path, skipped=True)
 
         info = self._run_yt_dlp(
             url,
             {
-                "format": self._mp4_format_selector(),
-                "merge_output_format": "mp4",
+                "format": self._video_format_selector(),
+                "merge_output_format": self.video_format,
             },
             target_path,
         )
-        path = self._expected_path(info, ".mp4", target_path)
-        self._emit(f"MP4 saved: {path}")
+        path = self._expected_path(info, suffix, target_path)
+        self._emit(f"{label} saved: {path}")
         return DownloadResult("mp4", path)
 
     def expected_output_path(
@@ -354,6 +362,33 @@ class SingleVideoDownloader:
             opts["force_keyframes_at_cuts"] = True
         return opts
 
+    def _audio_options(self) -> dict:
+        postprocessor = {
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": self.audio_format,
+        }
+        if self.audio_format == "mp3":
+            postprocessor["preferredquality"] = self.mp3_quality
+
+        if self.audio_format == "m4a":
+            audio_selector = "bestaudio[ext=m4a]/bestaudio/best"
+        elif self.audio_format == "opus":
+            audio_selector = "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best"
+        else:
+            audio_selector = "bestaudio/best"
+
+        return {
+            "format": audio_selector,
+            "postprocessors": [postprocessor],
+        }
+
+    def _video_format_selector(self) -> str:
+        if self.video_format == "mp4":
+            return self._mp4_format_selector()
+        if self.video_format == "webm":
+            return self._webm_format_selector()
+        return self._generic_video_format_selector()
+
     def _mp4_format_selector(self) -> str:
         if self.mp4_quality == "best":
             return "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/best"
@@ -365,6 +400,20 @@ class SingleVideoDownloader:
             f"bv*[height<={height}]+ba/"
             "best"
         )
+
+    def _generic_video_format_selector(self) -> str:
+        if self.mp4_quality == "best":
+            return "bv*+ba/best"
+
+        height = int(self.mp4_quality)
+        return f"bv*[height<={height}]+ba/b[height<={height}]/best[height<={height}]/best"
+
+    def _webm_format_selector(self) -> str:
+        if self.mp4_quality == "best":
+            return "bv*[ext=webm]+ba[ext=webm]/b[ext=webm]"
+
+        height = int(self.mp4_quality)
+        return f"bv*[ext=webm][height<={height}]+ba[ext=webm]/b[ext=webm][height<={height}]"
 
     def _progress_hook(self, data: dict) -> None:
         if self.cancel_event and self.cancel_event.is_set():
@@ -426,7 +475,7 @@ class SingleVideoDownloader:
     def _folder_template(self, suffix: str, playlist_title: str = "") -> str:
         rule = self.output_options.folder_rule
         if rule == "mode":
-            return "MP3" if suffix == ".mp3" else "MP4"
+            return self.audio_format.upper() if suffix.lstrip(".") in AUDIO_FORMATS else self.video_format.upper()
         if rule == "channel":
             return "%(uploader).100B"
         if rule == "date":
@@ -450,6 +499,24 @@ class SingleVideoDownloader:
                     template += ".%(ext)s"
                 return template
         return "%(title).200B [%(id)s].%(ext)s"
+
+    def _audio_suffix(self) -> str:
+        return f".{self.audio_format}"
+
+    def _video_suffix(self) -> str:
+        return f".{self.video_format}"
+
+    def _validate_audio_format(self, value: str) -> AudioFormat:
+        normalized = str(value).lower()
+        if normalized not in AUDIO_FORMATS:
+            raise ValueError(f"Unsupported audio format: {value}")
+        return normalized  # type: ignore[return-value]
+
+    def _validate_video_format(self, value: str) -> VideoFormat:
+        normalized = str(value).lower()
+        if normalized not in VIDEO_FORMATS:
+            raise ValueError(f"Unsupported video format: {value}")
+        return normalized  # type: ignore[return-value]
 
     def _emit(self, message: str) -> None:
         self.progress_callback(message)

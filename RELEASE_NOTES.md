@@ -1,4 +1,15 @@
-# YouTube Simple Downloader v0.6.2
+# YouTube Simple Downloader v0.8.0
+
+## v0.8.0 - Configurable Audio and Video Formats
+
+- Added audio format selection: MP3, M4A, OPUS, WAV, and FLAC.
+- Added video format selection: MP4, MKV, and WEBM.
+- Preview output paths now follow the selected audio/video formats.
+- Download history records selected audio/video formats and skip logic checks the exact requested format.
+- Result rows display the real output format based on the generated file extension.
+- Smoke test CLI now supports `--audio-format` and `--video-format`.
+
+## v0.6.2 - UI and Queue Flow
 
 Patch release improving the desktop interface and correcting direct-download and queue behavior.
 
