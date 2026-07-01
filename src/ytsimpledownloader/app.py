@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,11 +29,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from . import __version__
 from .downloader import DownloadCancelled, OutputOptions, SingleVideoDownloader, VideoInfo, extract_video_id, is_playlist_url
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 
@@ -109,6 +112,7 @@ TEXT = {
         "resume_disabled_status": "續傳已停用：如果同一檔案有未完成下載，下次會重新下載。",
         "queue_empty": "佇列是空的。",
         "queue_added": "已加入佇列：{count} 個項目。",
+        "queue_no_pending": "目前模式沒有需要下載的新項目。",
         "queue_building": "正在建立下載佇列...",
         "queue_item_failed": "加入佇列失敗",
         "queue_status_waiting": "等待",
@@ -227,6 +231,7 @@ TEXT = {
         "resume_disabled_status": "Resume is disabled: unfinished downloads for the same output path will restart.",
         "queue_empty": "The queue is empty.",
         "queue_added": "Added {count} item(s) to the queue.",
+        "queue_no_pending": "There are no new items to download for the current mode.",
         "queue_building": "Building download queue...",
         "queue_item_failed": "Failed to add to queue",
         "queue_status_waiting": "Waiting",
@@ -760,6 +765,26 @@ def history_downloads_by_video_id() -> dict[str, dict[str, str]]:
     return downloads
 
 
+def queue_task_key(url: str) -> str:
+    video_id = extract_video_id(url)
+    return f"video:{video_id}" if video_id else f"url:{url.strip()}"
+
+
+def task_has_downloaded_modes(
+    task: QueueTask,
+    mode: str,
+    downloaded_by_video_id: dict[str, dict[str, str]],
+) -> bool:
+    video_id = extract_video_id(task.url)
+    if not video_id:
+        return False
+    existing = downloaded_by_video_id.get(video_id, {})
+    return all(
+        bool(existing.get(requested_mode)) and Path(existing[requested_mode]).exists()
+        for requested_mode in modes_for_download(mode)
+    )
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -894,6 +919,8 @@ class MainWindow(QMainWindow):
         self.open_button.clicked.connect(self.open_output_folder)
         self.clear_url_button = QPushButton()
         self.clear_url_button.clicked.connect(self.url_input.clear)
+        self.paste_url_button = QPushButton()
+        self.paste_url_button.clicked.connect(self.paste_urls)
         self.clear_status_button = QPushButton()
         self.clear_status_button.clicked.connect(self.status_box_clear)
 
@@ -954,6 +981,8 @@ class MainWindow(QMainWindow):
         self.status_box = QTextEdit()
         self.status_box.setReadOnly(True)
 
+        self.result_tabs: QTabWidget | None = None
+
         self._build_layout()
         self.update_language()
         self.update_result_buttons()
@@ -964,35 +993,98 @@ class MainWindow(QMainWindow):
     def t(self, key: str) -> str:
         return TEXT[self.language][key]
 
+    def _section_header(self, number: int) -> tuple[QHBoxLayout, QLabel]:
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 2)
+        header.setSpacing(7)
+        badge = QLabel(str(number))
+        badge.setObjectName("sectionBadge")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedSize(20, 20)
+        title = QLabel()
+        title.setObjectName("sectionTitle")
+        header.addWidget(badge)
+        header.addWidget(title)
+        header.addStretch(1)
+        return header, title
+
     def _build_layout(self) -> None:
-        form = QGridLayout()
-        form.addWidget(self.url_label, 0, 0)
-        form.addWidget(self.url_input, 0, 1, 1, 4)
-        form.addWidget(self.clear_url_button, 0, 5)
-        form.addWidget(self.output_label, 1, 0)
-        form.addWidget(self.output_input, 1, 1, 1, 4)
-        form.addWidget(self.browse_button, 1, 5)
-        form.addWidget(self.mode_label, 2, 0)
-        form.addWidget(self.mode_combo, 2, 1)
-        form.addWidget(self.mp3_quality_label, 2, 2)
-        form.addWidget(self.mp3_quality_combo, 2, 3)
-        form.addWidget(self.mp4_quality_label, 2, 4)
-        form.addWidget(self.mp4_quality_combo, 2, 5)
-        form.addWidget(self.folder_rule_label, 3, 0)
-        form.addWidget(self.folder_rule_combo, 3, 1)
-        form.addWidget(self.filename_rule_label, 3, 2)
-        form.addWidget(self.filename_rule_combo, 3, 3)
-        form.addWidget(self.custom_template_label, 3, 4)
-        form.addWidget(self.custom_template_input, 3, 5)
-        form.addWidget(self.language_label, 4, 0)
-        form.addWidget(self.language_combo, 4, 1)
-        form.addWidget(self.notify_checkbox, 4, 2, 1, 2)
-        form.addWidget(self.skip_downloaded_checkbox, 4, 4, 1, 2)
-        form.addWidget(self.retry_label, 5, 0)
-        form.addWidget(self.retry_combo, 5, 1)
-        form.addWidget(self.resume_checkbox, 5, 2, 1, 4)
+        self.setMinimumSize(1180, 760)
+        if not self.settings.contains("window_size"):
+            self.resize(1280, 860)
+
+        self.input_group = QGroupBox()
+        input_group_layout = QVBoxLayout(self.input_group)
+        input_group_layout.setContentsMargins(12, 10, 12, 12)
+        input_group_layout.setSpacing(8)
+        input_header, self.input_title_label = self._section_header(1)
+        input_group_layout.addLayout(input_header)
+        input_layout = QHBoxLayout()
+        input_layout.setSpacing(14)
+
+        url_panel = QVBoxLayout()
+        url_panel.setSpacing(6)
+        url_panel.addWidget(self.url_label)
+        url_row = QHBoxLayout()
+        url_row.setSpacing(8)
+        self.url_input.setFixedHeight(86)
+        url_row.addWidget(self.url_input, 1)
+        url_buttons = QVBoxLayout()
+        url_buttons.setSpacing(8)
+        url_buttons.addWidget(self.paste_url_button)
+        url_buttons.addWidget(self.clear_url_button)
+        url_buttons.addStretch(1)
+        url_row.addLayout(url_buttons)
+        url_panel.addLayout(url_row)
+
+        output_panel = QVBoxLayout()
+        output_panel.setSpacing(6)
+        output_panel.addWidget(self.output_label)
+        output_row = QHBoxLayout()
+        output_row.setSpacing(8)
+        output_row.addWidget(self.output_input, 1)
+        output_row.addWidget(self.browse_button)
+        output_panel.addLayout(output_row)
+        output_panel.addStretch(1)
+
+        input_layout.addLayout(url_panel, 3)
+        input_layout.addLayout(output_panel, 2)
+        input_group_layout.addLayout(input_layout)
+
+        self.settings_group = QGroupBox()
+        settings_group_layout = QVBoxLayout(self.settings_group)
+        settings_group_layout.setContentsMargins(12, 10, 12, 12)
+        settings_group_layout.setSpacing(8)
+        settings_header, self.settings_title_label = self._section_header(2)
+        settings_group_layout.addLayout(settings_header)
+        settings_layout = QGridLayout()
+        settings_layout.setHorizontalSpacing(12)
+        settings_layout.setVerticalSpacing(8)
+        settings_layout.addWidget(self.mode_label, 0, 0)
+        settings_layout.addWidget(self.mode_combo, 1, 0)
+        settings_layout.addWidget(self.mp3_quality_label, 0, 1)
+        settings_layout.addWidget(self.mp3_quality_combo, 1, 1)
+        settings_layout.addWidget(self.mp4_quality_label, 0, 2)
+        settings_layout.addWidget(self.mp4_quality_combo, 1, 2)
+        settings_layout.addWidget(self.folder_rule_label, 0, 3)
+        settings_layout.addWidget(self.folder_rule_combo, 1, 3)
+        settings_layout.addWidget(self.filename_rule_label, 0, 4)
+        settings_layout.addWidget(self.filename_rule_combo, 1, 4)
+        settings_layout.addWidget(self.custom_template_label, 0, 5)
+        settings_layout.addWidget(self.custom_template_input, 1, 5)
+        settings_layout.addWidget(self.language_label, 2, 0)
+        settings_layout.addWidget(self.language_combo, 3, 0)
+        settings_layout.addWidget(self.retry_label, 2, 1)
+        settings_layout.addWidget(self.retry_combo, 3, 1)
+        settings_layout.addWidget(self.notify_checkbox, 3, 2)
+        settings_layout.addWidget(self.skip_downloaded_checkbox, 3, 3)
+        settings_layout.addWidget(self.resume_checkbox, 3, 4, 1, 2)
+        settings_layout.setColumnStretch(5, 2)
+        settings_group_layout.addLayout(settings_layout)
 
         buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        buttons.addStretch(1)
         buttons.addWidget(self.add_queue_button)
         buttons.addWidget(self.start_button)
         buttons.addWidget(self.cancel_button)
@@ -1009,8 +1101,17 @@ class MainWindow(QMainWindow):
         preview_details.addStretch(1)
 
         preview_layout = QHBoxLayout()
+        preview_layout.setSpacing(12)
         preview_layout.addWidget(self.thumbnail_label)
         preview_layout.addLayout(preview_details, 1)
+
+        self.preview_group = QGroupBox()
+        preview_group_layout = QVBoxLayout(self.preview_group)
+        preview_group_layout.setContentsMargins(10, 10, 10, 10)
+        preview_group_layout.setSpacing(8)
+        preview_header, self.preview_title_label = self._section_header(3)
+        preview_group_layout.addLayout(preview_header)
+        preview_group_layout.addLayout(preview_layout)
 
         progress_layout = QHBoxLayout()
         progress_layout.addWidget(self.progress_bar)
@@ -1024,6 +1125,16 @@ class MainWindow(QMainWindow):
         queue_buttons.addWidget(self.retry_failed_button)
         queue_buttons.addStretch(1)
 
+        self.queue_group = QGroupBox()
+        self.queue_list.setMinimumHeight(156)
+        queue_group_layout = QVBoxLayout(self.queue_group)
+        queue_group_layout.setContentsMargins(10, 10, 10, 10)
+        queue_group_layout.setSpacing(8)
+        queue_header, self.queue_title_label = self._section_header(4)
+        queue_group_layout.addLayout(queue_header)
+        queue_group_layout.addWidget(self.queue_list, 1)
+        queue_group_layout.addLayout(queue_buttons)
+
         result_buttons = QHBoxLayout()
         result_buttons.addWidget(self.open_file_button)
         result_buttons.addWidget(self.copy_path_button)
@@ -1034,27 +1145,206 @@ class MainWindow(QMainWindow):
         history_buttons.addWidget(self.clear_history_button)
         history_buttons.addStretch(1)
 
+        result_page = QWidget()
+        result_page_layout = QVBoxLayout(result_page)
+        result_page_layout.setContentsMargins(0, 0, 0, 0)
+        result_page_layout.addWidget(self.result_list)
+        result_page_layout.addLayout(result_buttons)
+
+        history_page = QWidget()
+        history_page_layout = QVBoxLayout(history_page)
+        history_page_layout.setContentsMargins(0, 0, 0, 0)
+        history_page_layout.addWidget(self.history_list)
+        history_page_layout.addLayout(history_buttons)
+
+        log_page = QWidget()
+        log_page_layout = QVBoxLayout(log_page)
+        log_page_layout.setContentsMargins(0, 0, 0, 0)
+        log_page_layout.addWidget(self.status_box)
+
+        self.result_tabs = QTabWidget()
+        self.result_tabs.addTab(result_page, "")
+        self.result_tabs.addTab(history_page, "")
+        self.result_tabs.addTab(log_page, "")
+
+        self.progress_group = QGroupBox()
+        progress_group_layout = QVBoxLayout(self.progress_group)
+        progress_group_layout.setContentsMargins(10, 10, 10, 10)
+        progress_group_layout.setSpacing(8)
+        progress_header, self.progress_title_label = self._section_header(5)
+        progress_group_layout.addLayout(progress_header)
+        progress_group_layout.addLayout(progress_layout)
+
+        self.results_group = QGroupBox()
+        self.results_group.setMinimumHeight(185)
+        results_group_layout = QVBoxLayout(self.results_group)
+        results_group_layout.setContentsMargins(10, 10, 10, 10)
+        results_group_layout.setSpacing(8)
+        results_header, self.results_title_label = self._section_header(6)
+        results_group_layout.addLayout(results_header)
+        results_group_layout.addWidget(self.result_tabs)
+
+        middle_layout = QHBoxLayout()
+        middle_layout.setSpacing(12)
+        middle_layout.addWidget(self.preview_group, 2)
+        middle_layout.addWidget(self.queue_group, 3)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(12)
+        self.health_label = QLabel()
+        self.version_footer_label = QLabel()
+        self.log_folder_button = QPushButton()
+        self.log_folder_button.clicked.connect(lambda: self.open_folder(PROJECT_DIR))
+        footer.addWidget(self.health_label)
+        footer.addStretch(1)
+        footer.addWidget(self.version_footer_label)
+        footer.addWidget(self.log_folder_button)
+
         layout = QVBoxLayout()
-        layout.addLayout(form)
-        layout.addWidget(self.preview_header)
-        layout.addLayout(preview_layout)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        layout.addWidget(self.input_group)
+        layout.addWidget(self.settings_group)
         layout.addLayout(buttons)
-        layout.addWidget(self.queue_header)
-        layout.addWidget(self.queue_list)
-        layout.addLayout(queue_buttons)
-        layout.addLayout(progress_layout)
-        layout.addWidget(self.results_header)
-        layout.addWidget(self.result_list)
-        layout.addLayout(result_buttons)
-        layout.addWidget(self.history_header)
-        layout.addWidget(self.history_list)
-        layout.addLayout(history_buttons)
-        layout.addWidget(self.status_header)
-        layout.addWidget(self.status_box, 1)
+        layout.addLayout(middle_layout, 2)
+        layout.addWidget(self.progress_group)
+        layout.addWidget(self.results_group, 2)
+        layout.addLayout(footer)
 
         root = QWidget()
         root.setLayout(layout)
         self.setCentralWidget(root)
+        self.start_button.setObjectName("primaryButton")
+        self.add_queue_button.setObjectName("accentButton")
+        self.health_label.setObjectName("healthLabel")
+        self.version_footer_label.setObjectName("mutedLabel")
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        self.setStyleSheet(
+            """
+            QMainWindow, QWidget {
+                background: #151719;
+                color: #e8eaed;
+                font-family: "Microsoft JhengHei UI", "Microsoft JhengHei", "Segoe UI";
+                font-size: 10.5pt;
+            }
+            QGroupBox {
+                background: #1b1f23;
+                border: 1px solid #30363d;
+                border-radius: 8px;
+                margin-top: 0;
+            }
+            QLabel {
+                color: #f1f3f4;
+                background: transparent;
+            }
+            QLabel#sectionBadge {
+                background: #2f81f7;
+                color: white;
+                border-radius: 5px;
+                font-weight: 700;
+                font-size: 9pt;
+            }
+            QLabel#sectionTitle {
+                color: #f1f3f4;
+                font-weight: 700;
+            }
+            QLabel#mutedLabel {
+                color: #aeb6bf;
+            }
+            QLabel#healthLabel {
+                color: #7ee787;
+                font-weight: 600;
+            }
+            QLineEdit, QTextEdit, QListWidget, QComboBox {
+                background: #22272e;
+                color: #f1f3f4;
+                border: 1px solid #3a424c;
+                border-radius: 6px;
+                padding: 6px;
+                selection-background-color: #2f81f7;
+            }
+            QTextEdit {
+                padding: 8px;
+            }
+            QListWidget {
+                alternate-background-color: #1f242a;
+            }
+            QPushButton {
+                background: #24292f;
+                color: #f1f3f4;
+                border: 1px solid #3a424c;
+                border-radius: 6px;
+                padding: 7px 14px;
+                min-height: 22px;
+            }
+            QPushButton:hover {
+                background: #2d333b;
+                border-color: #586069;
+            }
+            QPushButton:disabled {
+                color: #7d8590;
+                background: #202428;
+                border-color: #30363d;
+            }
+            QPushButton#primaryButton {
+                background: #2ea043;
+                border-color: #3fb950;
+                color: white;
+                font-weight: 700;
+                min-width: 130px;
+            }
+            QPushButton#primaryButton:hover {
+                background: #3fb950;
+            }
+            QPushButton#accentButton {
+                min-width: 120px;
+            }
+            QCheckBox {
+                spacing: 7px;
+                color: #f1f3f4;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QComboBox::drop-down {
+                width: 24px;
+                border-left: 1px solid #3a424c;
+            }
+            QProgressBar {
+                background: #24292f;
+                border: 1px solid #30363d;
+                border-radius: 6px;
+                color: #f1f3f4;
+                text-align: center;
+                min-height: 16px;
+            }
+            QProgressBar::chunk {
+                background: #2f81f7;
+                border-radius: 5px;
+            }
+            QTabWidget::pane {
+                border: 1px solid #30363d;
+                border-radius: 6px;
+                top: -1px;
+            }
+            QTabBar::tab {
+                background: #202428;
+                color: #c9d1d9;
+                border: 1px solid #30363d;
+                border-bottom: none;
+                padding: 7px 16px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+            }
+            QTabBar::tab:selected {
+                background: #2d333b;
+                color: #f1f3f4;
+            }
+            """
+        )
 
     def update_language(self) -> None:
         self.setWindowTitle(self.t("app_title"))
@@ -1088,6 +1378,7 @@ class MainWindow(QMainWindow):
         self.notify_checkbox.setText(self.t("notify"))
         self.skip_downloaded_checkbox.setText(self.t("skip_downloaded"))
         self.resume_checkbox.setText(self.t("resume_downloads"))
+        self.paste_url_button.setText("貼上" if self.language == "zh" else "Paste")
         self.add_queue_button.setText(self.t("add_queue"))
         self.start_button.setText(self.t("start"))
         self.cancel_button.setText(self.t("cancel"))
@@ -1108,6 +1399,20 @@ class MainWindow(QMainWindow):
         self.copy_path_button.setText(self.t("copy_path"))
         self.show_file_button.setText(self.t("show_folder"))
         self.clear_history_button.setText(self.t("clear_history"))
+        if hasattr(self, "input_group"):
+            self.input_title_label.setText("輸入" if self.language == "zh" else "Input")
+            self.settings_title_label.setText("下載設定" if self.language == "zh" else "Download Settings")
+            self.preview_title_label.setText("影片預覽（單一 URL）" if self.language == "zh" else "Preview (Single URL)")
+            self.queue_title_label.setText("下載佇列" if self.language == "zh" else "Download Queue")
+            self.progress_title_label.setText("目前下載進度" if self.language == "zh" else "Current Progress")
+            self.results_title_label.setText("結果 / 歷史紀錄 / 錯誤訊息" if self.language == "zh" else "Results / History / Log")
+            self.health_label.setText("● yt-dlp: OK    ● FFmpeg: OK    ● 輸出資料夾可寫入" if self.language == "zh" else "● yt-dlp: OK    ● FFmpeg: OK    ● Output folder writable")
+            self.version_footer_label.setText(f"版本：{__version__}" if self.language == "zh" else f"Version: {__version__}")
+            self.log_folder_button.setText("開啟 Log 資料夾" if self.language == "zh" else "Open Log Folder")
+        if self.result_tabs:
+            self.result_tabs.setTabText(0, self.t("results"))
+            self.result_tabs.setTabText(1, self.t("history"))
+            self.result_tabs.setTabText(2, self.t("status"))
         self.clear_preview()
         self.progress_label.setText(self.t("progress_waiting"))
         self.refresh_queue()
@@ -1263,6 +1568,13 @@ class MainWindow(QMainWindow):
         self.mp3_path_label.setText("MP3: -")
         self.mp4_path_label.setText("MP4: -")
 
+    def paste_urls(self) -> None:
+        text = QApplication.clipboard().text().strip()
+        if not text:
+            return
+        current = self.url_input.toPlainText().strip()
+        self.url_input.setPlainText(f"{current}\n{text}" if current else text)
+
     def parse_urls(self) -> list[str]:
         urls = []
         for raw_line in self.url_input.toPlainText().splitlines():
@@ -1378,9 +1690,17 @@ class MainWindow(QMainWindow):
         self.queue_worker.start()
 
     def queue_build_finished(self, tasks: list[QueueTask], errors: list[str]) -> None:
-        self.download_queue.extend(tasks)
-        if tasks:
-            self.append_status(self.t("queue_added").format(count=len(tasks)))
+        existing_keys = {queue_task_key(task.url) for task in self.download_queue}
+        new_tasks = []
+        for task in tasks:
+            key = queue_task_key(task.url)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            new_tasks.append(task)
+        self.download_queue.extend(new_tasks)
+        if new_tasks:
+            self.append_status(self.t("queue_added").format(count=len(new_tasks)))
         for error in errors:
             self.append_status(f"{self.t('queue_item_failed')}: {friendly_error(error, self.language)}")
         self.refresh_queue()
@@ -1428,14 +1748,56 @@ class MainWindow(QMainWindow):
         self.start_download(retry_failed_only=True)
 
     def start_download(self, retry_failed_only: bool = False) -> None:
+        mode = str(self.mode_combo.currentData())
+        downloaded_by_video_id = history_downloads_by_video_id()
+        skip_downloaded = self.skip_downloaded_checkbox.isChecked()
+
         if isinstance(retry_failed_only, bool) and retry_failed_only:
             tasks = [copy_queue_task(task) for task in self.download_queue]
-        else:
-            tasks = [copy_queue_task(task) for task in self.download_queue]
-            if not tasks:
-                tasks = [QueueTask(url=url) for url in self.parse_urls()]
-            for index, task in enumerate(tasks):
+        elif self.download_queue:
+            for index, task in enumerate(self.download_queue):
+                has_requested_outputs = task_has_downloaded_modes(task, mode, downloaded_by_video_id)
+                keep_completed = task.status in ("completed", "skipped") and has_requested_outputs
+                if keep_completed or (skip_downloaded and has_requested_outputs):
+                    task.status = "completed"
+                    task.error = ""
+                    task.last_error = ""
+                    task.friendly_error = ""
+                    task.queue_index = index
+                    continue
                 self.reset_task_for_run(task, index)
+            tasks = [copy_queue_task(task) for task in self.download_queue]
+            if not any(task.status == "waiting" for task in tasks):
+                self.refresh_queue()
+                self.append_status(self.t("queue_no_pending"))
+                return
+        else:
+            urls = self.parse_urls()
+            if not urls:
+                QMessageBox.warning(self, self.t("missing_url_title"), self.t("missing_url"))
+                return
+
+            if len(urls) == 1 and not is_playlist_url(urls[0]):
+                direct_task = QueueTask(url=urls[0])
+                if skip_downloaded and task_has_downloaded_modes(direct_task, mode, downloaded_by_video_id):
+                    self.append_status(self.t("queue_no_pending"))
+                    return
+                self.reset_task_for_run(direct_task, -1)
+                tasks = [direct_task]
+            else:
+                unique_urls = list(dict.fromkeys(urls))
+                self.download_queue = [QueueTask(url=url) for url in unique_urls]
+                for index, task in enumerate(self.download_queue):
+                    if skip_downloaded and task_has_downloaded_modes(task, mode, downloaded_by_video_id):
+                        task.status = "completed"
+                        task.queue_index = index
+                    else:
+                        self.reset_task_for_run(task, index)
+                tasks = [copy_queue_task(task) for task in self.download_queue]
+                self.refresh_queue()
+                if not any(task.status == "waiting" for task in tasks):
+                    self.append_status(self.t("queue_no_pending"))
+                    return
         if not tasks:
             QMessageBox.warning(self, self.t("missing_url_title"), self.t("missing_url"))
             return
@@ -1443,7 +1805,6 @@ class MainWindow(QMainWindow):
         output_dir = self.selected_output_dir_or_warn()
         if output_dir is None:
             return
-        mode = self.mode_combo.currentData()
         has_playlist = any(is_playlist_url(task.url) for task in tasks)
         if len(tasks) == 1 and not is_playlist_url(tasks[0].url):
             info = self.video_info_for_start(tasks[0].url, output_dir)
@@ -1464,8 +1825,8 @@ class MainWindow(QMainWindow):
         self.append_status(self.t("resume_enabled_status") if self.resume_checkbox.isChecked() else self.t("resume_disabled_status"))
         if len(tasks) > 1 or has_playlist:
             self.append_status(self.t("batch_auto_number"))
-        self.download_queue = tasks
-        self.refresh_queue()
+        if self.download_queue:
+            self.refresh_queue()
         self.set_running(True)
         self.save_settings()
 
@@ -1482,8 +1843,8 @@ class MainWindow(QMainWindow):
             self.t("batch_item_failed"),
             self.t("fetching_playlist"),
             self.t("playlist_loaded"),
-            self.skip_downloaded_checkbox.isChecked(),
-            history_downloads_by_video_id(),
+            skip_downloaded,
+            downloaded_by_video_id,
             self.t("skip_downloaded_status"),
             self.t("playlist_skip_summary"),
             self.t("retry_attempt"),
