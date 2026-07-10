@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -47,6 +48,14 @@ from .downloader import (
     is_playlist_url,
 )
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
+from .media_probe import probe_media
+from .transcoder import (
+    TranscodeCancelled,
+    VideoTranscodeOptions,
+    VideoTranscoder,
+    encoder_available,
+    friendly_transcode_error,
+)
 
 
 HISTORY_PATH = PROJECT_DIR / "history.json"
@@ -81,6 +90,37 @@ TEXT = {
         "video_format": "影片格式",
         "mp3_quality": "MP3 品質",
         "mp4_quality": "MP4 畫質",
+        "video_processing": "影片處理模式",
+        "video_processing_keep": "保留下載格式",
+        "video_processing_prefer": "優先下載相容格式",
+        "video_processing_transcode": "下載後轉檔",
+        "video_processing_osu": "osu! 相容影片",
+        "video_codec": "視訊編碼",
+        "video_codec_copy": "保留原格式",
+        "video_codec_h264": "H.264",
+        "resolution": "解析度",
+        "resolution_original": "保持原始解析度",
+        "resolution_custom": "自訂解析度",
+        "fps": "幀率",
+        "fps_original": "保持原始幀率",
+        "quality": "畫質",
+        "quality_high": "高畫質",
+        "quality_balanced": "平衡",
+        "quality_small": "小檔案",
+        "quality_custom": "自訂 CRF",
+        "crf": "CRF",
+        "transcode_speed": "轉檔速度",
+        "speed_veryfast": "極快",
+        "speed_fast": "快速",
+        "speed_medium": "平衡",
+        "speed_slow": "高壓縮",
+        "video_audio": "影片音訊",
+        "video_audio_keep": "保留音訊",
+        "video_audio_remove": "移除音訊",
+        "keep_original": "保留原始下載檔案",
+        "add_local_video": "加入本機影片轉檔",
+        "video_output_hint": "MP4 是容器；最大相容性請用 H.264 MP4 / yuv420p。CRF 越低畫質越高、檔案越大。",
+        "osu_preset_hint": "osu!: MP4 / H.264 / yuv420p / max 720p / CRF 20 / no audio / faststart",
         "folder_rule": "分類方式",
         "filename_rule": "檔名格式",
         "custom_template": "自訂檔名",
@@ -190,6 +230,7 @@ TEXT = {
         "error_webm": "無法輸出 WEBM：目前來源格式或 FFmpeg 合併流程不支援此影片。請改用 MP4 或 MKV。",
         "error_permission": "檔案權限不足，請確認輸出資料夾可以寫入，或改選其他資料夾。",
         "error_path": "檔名或路徑可能太長或無效，請改短輸出路徑後再試。",
+        "local_video_error": "請選擇支援的影片檔：mp4, mkv, webm, mov, avi。",
     },
     "en": {
         "app_title": "YouTube Simple Downloader",
@@ -203,6 +244,37 @@ TEXT = {
         "video_format": "Video Format",
         "mp3_quality": "MP3 Quality",
         "mp4_quality": "MP4 Quality",
+        "video_processing": "Video Processing",
+        "video_processing_keep": "Keep downloaded format",
+        "video_processing_prefer": "Prefer compatible format",
+        "video_processing_transcode": "Transcode after download",
+        "video_processing_osu": "osu! compatible video",
+        "video_codec": "Video Codec",
+        "video_codec_copy": "Keep original",
+        "video_codec_h264": "H.264",
+        "resolution": "Resolution",
+        "resolution_original": "Original resolution",
+        "resolution_custom": "Custom resolution",
+        "fps": "FPS",
+        "fps_original": "Original FPS",
+        "quality": "Quality",
+        "quality_high": "High quality",
+        "quality_balanced": "Balanced",
+        "quality_small": "Small file",
+        "quality_custom": "Custom CRF",
+        "crf": "CRF",
+        "transcode_speed": "Transcode Speed",
+        "speed_veryfast": "Very Fast",
+        "speed_fast": "Fast",
+        "speed_medium": "Balanced",
+        "speed_slow": "Smaller File",
+        "video_audio": "Video Audio",
+        "video_audio_keep": "Keep audio",
+        "video_audio_remove": "Remove audio",
+        "keep_original": "Keep original downloaded file",
+        "add_local_video": "Add Local Video",
+        "video_output_hint": "MP4 is a container. For maximum compatibility, use H.264 MP4 / yuv420p. Lower CRF means higher quality and larger files.",
+        "osu_preset_hint": "osu!: MP4 / H.264 / yuv420p / max 720p / CRF 20 / no audio / faststart",
         "folder_rule": "Folder Rule",
         "filename_rule": "Filename Format",
         "custom_template": "Custom Filename",
@@ -312,6 +384,7 @@ TEXT = {
         "error_webm": "Cannot output WEBM: this source format or FFmpeg merge flow is not supported for this video. Please use MP4 or MKV.",
         "error_permission": "File permission was denied. Please check the output folder or choose another folder.",
         "error_path": "The filename or path may be too long or invalid. Please try a shorter output folder.",
+        "local_video_error": "Please choose supported video files: mp4, mkv, webm, mov, avi.",
     },
 }
 
@@ -327,6 +400,7 @@ class PreviewWorker(QThread):
         output_options: OutputOptions,
         audio_format: str,
         video_format: str,
+        video_processing_options: VideoTranscodeOptions,
     ) -> None:
         super().__init__()
         self.url = url
@@ -334,6 +408,7 @@ class PreviewWorker(QThread):
         self.output_options = output_options
         self.audio_format = audio_format
         self.video_format = video_format
+        self.video_processing_options = video_processing_options
 
     def run(self) -> None:
         try:
@@ -342,6 +417,7 @@ class PreviewWorker(QThread):
                 output_options=self.output_options,
                 audio_format=self.audio_format,
                 video_format=self.video_format,
+                video_processing_options=self.video_processing_options,
             )
             info = downloader.fetch_video_info(self.url)
             thumbnail = b""
@@ -422,6 +498,7 @@ class DownloadWorker(QThread):
         mp4_quality: str,
         audio_format: str,
         video_format: str,
+        video_processing_options: VideoTranscodeOptions,
         output_options: OutputOptions,
         resume_downloads: bool,
         batch_item_template: str,
@@ -443,6 +520,7 @@ class DownloadWorker(QThread):
         self.mp4_quality = mp4_quality
         self.audio_format = audio_format
         self.video_format = video_format
+        self.video_processing_options = video_processing_options
         self.output_options = output_options
         self.resume_downloads = resume_downloads
         self.batch_item_template = batch_item_template
@@ -470,6 +548,7 @@ class DownloadWorker(QThread):
                 mp4_quality=self.mp4_quality,
                 audio_format=self.audio_format,
                 video_format=self.video_format,
+                video_processing_options=self.video_processing_options,
                 output_options=self.output_options,
                 resume_downloads=self.resume_downloads,
             )
@@ -663,6 +742,83 @@ class DownloadWorker(QThread):
             if history_skipped_count:
                 self.status.emit(self.playlist_skip_summary_template.format(skipped=history_skipped_count))
         except DownloadCancelled as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.finished_ok.emit(entries)
+
+
+class LocalTranscodeWorker(QThread):
+    status = Signal(str)
+    finished_ok = Signal(list)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        paths: list[str],
+        output_dir: Path,
+        options: VideoTranscodeOptions,
+        file_exists_action: str,
+    ) -> None:
+        super().__init__()
+        self.paths = [str(Path(path)) for path in paths]
+        self.output_dir = output_dir
+        self.options = options
+        self.file_exists_action = file_exists_action
+        self.cancel_event = Event()
+
+    def cancel(self) -> None:
+        self.cancel_event.set()
+
+    def run(self) -> None:
+        entries = []
+        try:
+            transcoder = VideoTranscoder(progress_callback=self.status.emit, cancel_event=self.cancel_event)
+            total = len(self.paths)
+            for index, raw_path in enumerate(self.paths, start=1):
+                if self.cancel_event.is_set():
+                    raise TranscodeCancelled("Transcode cancelled by user.")
+                source = Path(raw_path)
+                self.status.emit(f"Local transcode {index}/{total}: {source}")
+                try:
+                    source_info = probe_media(source, transcoder.ffmpeg_path)
+                    self.status.emit(f"Source media: {source_info.summary()}")
+                    result = transcoder.transcode(
+                        source,
+                        self.options,
+                        output_dir=self.output_dir if str(self.output_dir) else None,
+                        file_exists_action=self.file_exists_action,
+                    )
+                except TranscodeCancelled:
+                    raise
+                except Exception as exc:
+                    entries.append(
+                        {
+                            "index": index,
+                            "url": "",
+                            "title": source.name,
+                            "source_path": str(source),
+                            "error": str(exc),
+                            "results": [],
+                        }
+                    )
+                    self.status.emit(f"Local transcode failed: {source} - {exc}")
+                else:
+                    entries.append(
+                        {
+                            "index": index,
+                            "url": "",
+                            "title": source.stem,
+                            "source_path": str(source),
+                            "source_media_info": source_info,
+                            "media_info": result.media_info,
+                            "error": "",
+                            "results": [("mp4", str(result.path), result.skipped)],
+                            "transcode": True,
+                        }
+                    )
+        except TranscodeCancelled as exc:
             self.failed.emit(str(exc))
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -867,6 +1023,7 @@ def task_has_downloaded_modes(
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.setAcceptDrops(True)
         ensure_default_dirs()
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
@@ -875,7 +1032,7 @@ class MainWindow(QMainWindow):
         if self.language not in TEXT:
             self.language = "zh"
 
-        self.worker: DownloadWorker | None = None
+        self.worker: DownloadWorker | LocalTranscodeWorker | None = None
         self.preview_worker: PreviewWorker | None = None
         self.queue_worker: QueueBuildWorker | None = None
         self.download_queue: list[QueueTask] = []
@@ -893,6 +1050,14 @@ class MainWindow(QMainWindow):
         self.video_format_label = QLabel()
         self.mp3_quality_label = QLabel()
         self.mp4_quality_label = QLabel()
+        self.video_processing_label = QLabel()
+        self.video_codec_label = QLabel()
+        self.resolution_label = QLabel()
+        self.fps_label = QLabel()
+        self.quality_label = QLabel()
+        self.crf_label = QLabel()
+        self.transcode_speed_label = QLabel()
+        self.video_audio_label = QLabel()
         self.folder_rule_label = QLabel()
         self.filename_rule_label = QLabel()
         self.custom_template_label = QLabel()
@@ -966,6 +1131,87 @@ class MainWindow(QMainWindow):
         self.audio_format_combo.currentIndexChanged.connect(self.handle_format_changed)
         self.video_format_combo.currentIndexChanged.connect(self.handle_format_changed)
 
+        self.video_processing_combo = QComboBox()
+        for value in ("keep", "prefer_compatible", "transcode", "osu"):
+            self.video_processing_combo.addItem("", value)
+        saved_video_processing = str(self.settings.value("video_processing_mode", "keep"))
+        video_processing_index = self.video_processing_combo.findData(saved_video_processing)
+        if video_processing_index >= 0:
+            self.video_processing_combo.setCurrentIndex(video_processing_index)
+
+        self.video_codec_combo = QComboBox()
+        self.video_codec_combo.addItem("", "copy")
+        self.video_codec_combo.addItem("", "h264")
+        saved_video_codec = str(self.settings.value("video_codec", "h264"))
+        video_codec_index = self.video_codec_combo.findData(saved_video_codec)
+        if video_codec_index >= 0:
+            self.video_codec_combo.setCurrentIndex(video_codec_index)
+
+        self.resolution_combo = QComboBox()
+        for value in ("original", "2160", "1440", "1080", "720", "480"):
+            self.resolution_combo.addItem("", value)
+        saved_resolution = str(self.settings.value("video_resolution", "original"))
+        resolution_index = self.resolution_combo.findData(saved_resolution)
+        if resolution_index >= 0:
+            self.resolution_combo.setCurrentIndex(resolution_index)
+
+        self.fps_combo = QComboBox()
+        for value in ("original", "60", "30", "24"):
+            self.fps_combo.addItem("", value)
+        saved_fps = str(self.settings.value("video_fps", "original"))
+        fps_index = self.fps_combo.findData(saved_fps)
+        if fps_index >= 0:
+            self.fps_combo.setCurrentIndex(fps_index)
+
+        self.quality_combo = QComboBox()
+        for value in ("high", "balanced", "small", "custom"):
+            self.quality_combo.addItem("", value)
+        saved_quality = str(self.settings.value("video_quality", "balanced"))
+        quality_index = self.quality_combo.findData(saved_quality)
+        if quality_index >= 0:
+            self.quality_combo.setCurrentIndex(quality_index)
+
+        self.crf_spin = QSpinBox()
+        self.crf_spin.setRange(0, 51)
+        self.crf_spin.setValue(int(str(self.settings.value("video_crf", "20"))))
+
+        self.transcode_speed_combo = QComboBox()
+        for value in ("veryfast", "fast", "medium", "slow"):
+            self.transcode_speed_combo.addItem("", value)
+        saved_speed = str(self.settings.value("video_transcode_speed", "medium"))
+        speed_index = self.transcode_speed_combo.findData(saved_speed)
+        if speed_index >= 0:
+            self.transcode_speed_combo.setCurrentIndex(speed_index)
+
+        self.video_audio_combo = QComboBox()
+        for value in ("keep", "remove"):
+            self.video_audio_combo.addItem("", value)
+        saved_video_audio = str(self.settings.value("video_audio_mode", "keep"))
+        video_audio_index = self.video_audio_combo.findData(saved_video_audio)
+        if video_audio_index >= 0:
+            self.video_audio_combo.setCurrentIndex(video_audio_index)
+
+        self.keep_original_checkbox = QCheckBox()
+        self.keep_original_checkbox.setChecked(str(self.settings.value("video_keep_original", "true")).lower() != "false")
+        self.video_output_hint_label = QLabel()
+        self.video_output_hint_label.setWordWrap(True)
+
+        for widget in (
+            self.video_processing_combo,
+            self.video_codec_combo,
+            self.resolution_combo,
+            self.fps_combo,
+            self.quality_combo,
+            self.crf_spin,
+            self.transcode_speed_combo,
+            self.video_audio_combo,
+        ):
+            if isinstance(widget, QSpinBox):
+                widget.valueChanged.connect(self.handle_video_processing_changed)
+            else:
+                widget.currentIndexChanged.connect(self.handle_video_processing_changed)
+        self.keep_original_checkbox.stateChanged.connect(lambda _state: self.save_settings())
+
         self.folder_rule_combo = QComboBox()
         for value in ("none", "mode", "channel", "date", "playlist"):
             self.folder_rule_combo.addItem("", value)
@@ -1017,6 +1263,8 @@ class MainWindow(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel_download)
         self.open_button = QPushButton()
         self.open_button.clicked.connect(self.open_output_folder)
+        self.add_local_video_button = QPushButton()
+        self.add_local_video_button.clicked.connect(self.choose_local_videos)
         self.clear_url_button = QPushButton()
         self.clear_url_button.clicked.connect(self.url_input.clear)
         self.paste_url_button = QPushButton()
@@ -1183,6 +1431,24 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.notify_checkbox, 3, 2)
         settings_layout.addWidget(self.skip_downloaded_checkbox, 3, 3)
         settings_layout.addWidget(self.resume_checkbox, 3, 4, 1, 2)
+        settings_layout.addWidget(self.video_processing_label, 4, 0)
+        settings_layout.addWidget(self.video_processing_combo, 5, 0)
+        settings_layout.addWidget(self.video_codec_label, 4, 1)
+        settings_layout.addWidget(self.video_codec_combo, 5, 1)
+        settings_layout.addWidget(self.resolution_label, 4, 2)
+        settings_layout.addWidget(self.resolution_combo, 5, 2)
+        settings_layout.addWidget(self.fps_label, 4, 3)
+        settings_layout.addWidget(self.fps_combo, 5, 3)
+        settings_layout.addWidget(self.quality_label, 4, 4)
+        settings_layout.addWidget(self.quality_combo, 5, 4)
+        settings_layout.addWidget(self.crf_label, 4, 5)
+        settings_layout.addWidget(self.crf_spin, 5, 5)
+        settings_layout.addWidget(self.transcode_speed_label, 4, 6)
+        settings_layout.addWidget(self.transcode_speed_combo, 5, 6)
+        settings_layout.addWidget(self.video_audio_label, 6, 0)
+        settings_layout.addWidget(self.video_audio_combo, 7, 0)
+        settings_layout.addWidget(self.keep_original_checkbox, 7, 1, 1, 2)
+        settings_layout.addWidget(self.video_output_hint_label, 6, 3, 2, 5)
         settings_layout.setColumnStretch(7, 2)
         settings_group_layout.addLayout(settings_layout)
 
@@ -1193,6 +1459,7 @@ class MainWindow(QMainWindow):
         buttons.addWidget(self.start_button)
         buttons.addWidget(self.cancel_button)
         buttons.addWidget(self.open_button)
+        buttons.addWidget(self.add_local_video_button)
         buttons.addWidget(self.clear_status_button)
         buttons.addStretch(1)
 
@@ -1460,6 +1727,41 @@ class MainWindow(QMainWindow):
         self.video_format_label.setText(self.t("video_format"))
         self.mp3_quality_label.setText(self.t("mp3_quality"))
         self.mp4_quality_label.setText(self.t("mp4_quality"))
+        self.video_processing_label.setText(self.t("video_processing"))
+        for index, key in enumerate(
+            (
+                "video_processing_keep",
+                "video_processing_prefer",
+                "video_processing_transcode",
+                "video_processing_osu",
+            )
+        ):
+            self.video_processing_combo.setItemText(index, self.t(key))
+        self.video_codec_label.setText(self.t("video_codec"))
+        self.video_codec_combo.setItemText(0, self.t("video_codec_copy"))
+        self.video_codec_combo.setItemText(1, self.t("video_codec_h264"))
+        self.resolution_label.setText(self.t("resolution"))
+        self.resolution_combo.setItemText(0, self.t("resolution_original"))
+        for index, value in enumerate(("2160p", "1440p", "1080p", "720p", "480p"), start=1):
+            self.resolution_combo.setItemText(index, value)
+        self.fps_label.setText(self.t("fps"))
+        self.fps_combo.setItemText(0, self.t("fps_original"))
+        for index, value in enumerate(("60 FPS", "30 FPS", "24 FPS"), start=1):
+            self.fps_combo.setItemText(index, value)
+        self.quality_label.setText(self.t("quality"))
+        for index, key in enumerate(("quality_high", "quality_balanced", "quality_small", "quality_custom")):
+            self.quality_combo.setItemText(index, self.t(key))
+        self.crf_label.setText(self.t("crf"))
+        self.transcode_speed_label.setText(self.t("transcode_speed"))
+        for index, key in enumerate(("speed_veryfast", "speed_fast", "speed_medium", "speed_slow")):
+            self.transcode_speed_combo.setItemText(index, self.t(key))
+        self.video_audio_label.setText(self.t("video_audio"))
+        self.video_audio_combo.setItemText(0, self.t("video_audio_keep"))
+        self.video_audio_combo.setItemText(1, self.t("video_audio_remove"))
+        self.keep_original_checkbox.setText(self.t("keep_original"))
+        self.video_output_hint_label.setText(
+            self.t("osu_preset_hint") if self.video_processing_combo.currentData() == "osu" else self.t("video_output_hint")
+        )
         self.folder_rule_label.setText(self.t("folder_rule"))
         self.filename_rule_label.setText(self.t("filename_rule"))
         self.custom_template_label.setText(self.t("custom_template"))
@@ -1489,6 +1791,7 @@ class MainWindow(QMainWindow):
         self.start_button.setText(self.t("start"))
         self.cancel_button.setText(self.t("cancel"))
         self.open_button.setText(self.t("open_output"))
+        self.add_local_video_button.setText(self.t("add_local_video"))
         self.clear_url_button.setText(self.t("clear_url"))
         self.clear_status_button.setText(self.t("clear_status"))
         self.preview_header.setText(self.t("preview"))
@@ -1524,6 +1827,7 @@ class MainWindow(QMainWindow):
         self.refresh_queue()
         self.refresh_history()
         self.update_custom_template_controls()
+        self.update_video_processing_controls()
 
     def change_language(self) -> None:
         self.language = self.language_combo.currentData()
@@ -1532,6 +1836,7 @@ class MainWindow(QMainWindow):
 
     def handle_mode_changed(self) -> None:
         self.update_quality_controls()
+        self.update_video_processing_controls()
         self.save_settings()
         self.schedule_preview()
 
@@ -1539,6 +1844,23 @@ class MainWindow(QMainWindow):
         self.current_info = None
         self.current_info_key = ""
         self.update_quality_controls()
+        self.save_settings()
+        self.schedule_preview()
+
+    def handle_video_processing_changed(self) -> None:
+        mode = self.video_processing_combo.currentData()
+        if mode == "osu":
+            self.video_format_combo.setCurrentIndex(max(0, self.video_format_combo.findData("mp4")))
+            self.video_codec_combo.setCurrentIndex(max(0, self.video_codec_combo.findData("h264")))
+            self.resolution_combo.setCurrentIndex(max(0, self.resolution_combo.findData("720")))
+            if self.fps_combo.currentData() not in ("30", "60"):
+                self.fps_combo.setCurrentIndex(max(0, self.fps_combo.findData("60")))
+            self.quality_combo.setCurrentIndex(max(0, self.quality_combo.findData("custom")))
+            self.crf_spin.setValue(20)
+            self.transcode_speed_combo.setCurrentIndex(max(0, self.transcode_speed_combo.findData("medium")))
+            self.video_audio_combo.setCurrentIndex(max(0, self.video_audio_combo.findData("remove")))
+            self.keep_original_checkbox.setChecked(True)
+        self.update_video_processing_controls()
         self.save_settings()
         self.schedule_preview()
 
@@ -1571,6 +1893,44 @@ class MainWindow(QMainWindow):
         self.mp4_quality_label.setEnabled(mp4_enabled)
         self.mp4_quality_combo.setEnabled(mp4_enabled)
 
+    def update_video_processing_controls(self, base_enabled: bool | None = None) -> None:
+        if base_enabled is None:
+            base_enabled = self.mode_combo.isEnabled()
+        video_mode = self.mode_combo.currentData() in ("mp4", "both")
+        enabled = base_enabled and video_mode
+        processing = self.video_processing_combo.currentData()
+        needs_settings = enabled and processing != "keep"
+        force_osu = processing == "osu"
+
+        self.video_processing_label.setEnabled(enabled)
+        self.video_processing_combo.setEnabled(enabled)
+        for widget in (
+            self.video_codec_label,
+            self.video_codec_combo,
+            self.resolution_label,
+            self.resolution_combo,
+            self.fps_label,
+            self.fps_combo,
+            self.quality_label,
+            self.quality_combo,
+            self.crf_label,
+            self.crf_spin,
+            self.transcode_speed_label,
+            self.transcode_speed_combo,
+            self.video_audio_label,
+            self.video_audio_combo,
+            self.keep_original_checkbox,
+            self.video_output_hint_label,
+        ):
+            widget.setEnabled(needs_settings)
+        if force_osu:
+            self.video_format_combo.setEnabled(False)
+            self.video_audio_combo.setEnabled(False)
+        self.crf_spin.setEnabled(needs_settings and self.quality_combo.currentData() == "custom")
+        self.video_output_hint_label.setText(
+            self.t("osu_preset_hint") if force_osu else self.t("video_output_hint")
+        )
+
     def choose_output_dir(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, self.t("output_folder"), self.output_input.text())
         if folder:
@@ -1591,6 +1951,28 @@ class MainWindow(QMainWindow):
     def current_video_format(self) -> str:
         return str(self.video_format_combo.currentData() or "mp4")
 
+    def current_video_transcode_options(self) -> VideoTranscodeOptions:
+        mode = str(self.video_processing_combo.currentData() or "keep")
+        if mode == "osu":
+            return VideoTranscodeOptions.osu(str(self.fps_combo.currentData() or "60"))
+        return VideoTranscodeOptions(
+            mode=mode,
+            container=self.current_video_format(),
+            video_codec=str(self.video_codec_combo.currentData() or "h264"),
+            resolution=str(self.resolution_combo.currentData() or "original"),
+            fps=str(self.fps_combo.currentData() or "original"),
+            quality=str(self.quality_combo.currentData() or "balanced"),
+            crf=int(self.crf_spin.value()),
+            speed=str(self.transcode_speed_combo.currentData() or "medium"),
+            audio=str(self.video_audio_combo.currentData() or "keep"),
+            keep_original=self.keep_original_checkbox.isChecked(),
+            suffix="_h264" if mode != "osu" else "_osu_h264",
+            pixel_format="yuv420p",
+            faststart=True,
+            no_upscale=True,
+            aspect_mode="fit",
+        ).normalized()
+
     def preview_context_key(self, url: str, output_dir: Path) -> str:
         options = self.output_options()
         return "|".join(
@@ -1602,6 +1984,12 @@ class MainWindow(QMainWindow):
                 options.custom_template,
                 self.current_audio_format(),
                 self.current_video_format(),
+                self.current_video_transcode_options().mode,
+                self.current_video_transcode_options().suffix,
+                self.current_video_transcode_options().container,
+                self.current_video_transcode_options().video_codec,
+                self.current_video_transcode_options().resolution,
+                self.current_video_transcode_options().fps,
             )
         )
 
@@ -1655,6 +2043,7 @@ class MainWindow(QMainWindow):
             self.output_options(),
             self.current_audio_format(),
             self.current_video_format(),
+            self.current_video_transcode_options(),
         )
         self.preview_worker.finished_ok.connect(
             lambda info, thumbnail: self.preview_finished(url, info, thumbnail, request_key)
@@ -2011,6 +2400,7 @@ class MainWindow(QMainWindow):
             self.mp4_quality_combo.currentData(),
             audio_format,
             video_format,
+            self.current_video_transcode_options(),
             self.output_options(),
             self.resume_checkbox.isChecked(),
             self.t("batch_item"),
@@ -2042,6 +2432,7 @@ class MainWindow(QMainWindow):
                 output_options=self.output_options(),
                 audio_format=self.current_audio_format(),
                 video_format=self.current_video_format(),
+                video_processing_options=self.current_video_transcode_options(),
             ).fetch_video_info(url)
         except Exception as exc:
             QMessageBox.warning(self, self.t("cannot_read_title"), friendly_error(str(exc), self.language))
@@ -2091,6 +2482,91 @@ class MainWindow(QMainWindow):
             self.cancel_button.setEnabled(False)
             self.worker.cancel()
 
+    def choose_local_videos(self) -> None:
+        files, _selected_filter = QFileDialog.getOpenFileNames(
+            self,
+            self.t("add_local_video"),
+            str(Path.home()),
+            "Videos (*.mp4 *.mkv *.webm *.mov *.avi)",
+        )
+        if files:
+            self.start_local_transcode(files)
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        videos = [path for path in paths if Path(path).suffix.lower() in {".mp4", ".mkv", ".webm", ".mov", ".avi"}]
+        if not videos:
+            QMessageBox.warning(self, self.t("error"), self.t("local_video_error"))
+            return
+        self.start_local_transcode(videos)
+
+    def start_local_transcode(self, paths: list[str]) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+        videos = [str(Path(path)) for path in paths if Path(path).suffix.lower() in {".mp4", ".mkv", ".webm", ".mov", ".avi"}]
+        if not videos:
+            QMessageBox.warning(self, self.t("error"), self.t("local_video_error"))
+            return
+        output_dir = Path("")
+
+        options = self.current_video_transcode_options()
+        if options.mode == "keep":
+            options = VideoTranscodeOptions(
+                mode="transcode",
+                container=self.current_video_format(),
+                video_codec="h264",
+                resolution="original",
+                fps="original",
+                quality="balanced",
+                crf=20,
+                speed="medium",
+                audio="keep",
+                keep_original=True,
+                suffix="_h264",
+            )
+        elif options.mode == "prefer_compatible":
+            options = VideoTranscodeOptions(
+                mode="transcode",
+                container=options.container,
+                video_codec=options.video_codec,
+                resolution=options.resolution,
+                fps=options.fps,
+                quality=options.quality,
+                crf=options.crf,
+                speed=options.speed,
+                audio=options.audio,
+                keep_original=True,
+                suffix=options.suffix,
+                pixel_format=options.pixel_format,
+                faststart=options.faststart,
+                no_upscale=options.no_upscale,
+                aspect_mode=options.aspect_mode,
+            )
+
+        self.status_box.clear()
+        self.result_list.clear()
+        self.progress_bar.setValue(0)
+        self.progress_label.setText(self.t("progress_waiting"))
+        self.append_status(
+            f"{self.t('output_folder_line')}: "
+            + ("原影片所在資料夾" if self.language == "zh" else "Source video folder")
+        )
+        self.set_running(True)
+        self.save_settings()
+
+        self.worker = LocalTranscodeWorker(videos, output_dir, options, "number")
+        self.worker.status.connect(self.append_status)
+        self.worker.finished_ok.connect(self.download_finished)
+        self.worker.failed.connect(self.download_failed)
+        self.worker.finished.connect(lambda worker=self.worker: self.cleanup_worker(worker))
+        self.worker.start()
+
     def download_finished(self, entries: list[dict]) -> None:
         self.progress_bar.setValue(100)
         self.progress_label.setText("100%")
@@ -2128,7 +2604,9 @@ class MainWindow(QMainWindow):
             info = entry.get("info")
             url = entry.get("url") or ""
             if info and paths:
-                self.add_history(info, url, paths)
+                self.add_history(info, url, paths, entry)
+            elif paths and entry.get("source_path"):
+                self.add_local_history(entry, paths)
 
         if is_batch:
             self.append_status(self.t("batch_done").format(success=success_count, failed=failed_count))
@@ -2155,16 +2633,20 @@ class MainWindow(QMainWindow):
             self.set_running(False)
             return
 
-        self.append_status(f"{self.t('error')}: {friendly_error(message, self.language)}")
+        friendly = friendly_error(message, self.language)
+        if friendly == message:
+            friendly = friendly_transcode_error(message)
+        self.append_status(f"{self.t('error')}: {friendly}")
         self.set_running(False)
 
-    def cleanup_worker(self, worker: DownloadWorker) -> None:
+    def cleanup_worker(self, worker: DownloadWorker | LocalTranscodeWorker) -> None:
         if self.worker is worker:
             self.worker = None
         self.update_queue_buttons()
         worker.deleteLater()
 
-    def add_history(self, info: VideoInfo, url: str, paths: list[str]) -> None:
+    def add_history(self, info: VideoInfo, url: str, paths: list[str], entry: dict | None = None) -> None:
+        video_options = self.current_video_transcode_options()
         items = load_history()
         items.insert(
             0,
@@ -2180,6 +2662,50 @@ class MainWindow(QMainWindow):
                 "video_format": self.current_video_format(),
                 "mp3_quality": self.mp3_quality_combo.currentText(),
                 "mp4_quality": self.mp4_quality_combo.currentText(),
+                "source_path": str(entry.get("source_path") or "") if entry else "",
+                "converted_paths": paths if video_options.mode in {"prefer_compatible", "transcode", "osu"} else [],
+                "video_processing_mode": video_options.mode,
+                "video_codec": video_options.video_codec,
+                "resolution": video_options.resolution,
+                "fps": video_options.fps,
+                "crf": video_options.effective_crf(),
+                "preset": video_options.effective_preset(),
+                "remove_audio": video_options.audio == "remove",
+                "osu_compatible": video_options.mode == "osu",
+                "media_info": entry.get("media_info").summary() if entry and entry.get("media_info") else "",
+            },
+        )
+        save_history(items)
+        self.refresh_history()
+
+    def add_local_history(self, entry: dict, paths: list[str]) -> None:
+        video_options = self.current_video_transcode_options()
+        items = load_history()
+        items.insert(
+            0,
+            {
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "title": entry.get("title") or Path(str(entry.get("source_path") or "")).stem,
+                "url": "",
+                "video_id": "",
+                "source_path": entry.get("source_path") or "",
+                "paths": paths,
+                "converted_paths": paths,
+                "download_modes": ["mp4"],
+                "mode": "Local Transcode",
+                "video_format": video_options.container,
+                "video_processing_mode": video_options.mode,
+                "video_codec": video_options.video_codec,
+                "resolution": video_options.resolution,
+                "fps": video_options.fps,
+                "crf": video_options.effective_crf(),
+                "preset": video_options.effective_preset(),
+                "remove_audio": video_options.audio == "remove",
+                "osu_compatible": video_options.mode == "osu",
+                "source_media_info": entry.get("source_media_info").summary()
+                if entry.get("source_media_info")
+                else "",
+                "media_info": entry.get("media_info").summary() if entry.get("media_info") else "",
             },
         )
         save_history(items)
@@ -2268,7 +2794,7 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
 
     def append_status(self, message: str) -> None:
-        if message.startswith("Downloading:"):
+        if message.startswith("Downloading:") or message.startswith("Transcoding:"):
             self.update_progress(message)
             return
         self.status_box.append(message)
@@ -2278,7 +2804,7 @@ class MainWindow(QMainWindow):
         if match:
             value = int(float(match.group(1)))
             self.progress_bar.setValue(max(0, min(100, value)))
-        self.progress_label.setText(message.replace("Downloading: ", ""))
+        self.progress_label.setText(message.replace("Downloading: ", "").replace("Transcoding: ", ""))
 
     def status_box_clear(self) -> None:
         self.status_box.clear()
@@ -2288,6 +2814,7 @@ class MainWindow(QMainWindow):
     def set_running(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
         self.add_queue_button.setEnabled(not running)
+        self.add_local_video_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
         self.url_input.setEnabled(not running)
         self.browse_button.setEnabled(not running)
@@ -2299,6 +2826,7 @@ class MainWindow(QMainWindow):
         self.resume_checkbox.setEnabled(not running)
         self.retry_combo.setEnabled(not running)
         self.update_quality_controls(not running)
+        self.update_video_processing_controls(not running)
         self.update_custom_template_controls()
         self.update_queue_buttons()
 
@@ -2309,6 +2837,16 @@ class MainWindow(QMainWindow):
         self.settings.setValue("video_format", self.current_video_format())
         self.settings.setValue("mp3_quality", self.mp3_quality_combo.currentData())
         self.settings.setValue("mp4_quality", self.mp4_quality_combo.currentData())
+        video_options = self.current_video_transcode_options()
+        self.settings.setValue("video_processing_mode", video_options.mode)
+        self.settings.setValue("video_codec", video_options.video_codec)
+        self.settings.setValue("video_resolution", video_options.resolution)
+        self.settings.setValue("video_fps", video_options.fps)
+        self.settings.setValue("video_quality", video_options.quality)
+        self.settings.setValue("video_crf", video_options.crf)
+        self.settings.setValue("video_transcode_speed", video_options.speed)
+        self.settings.setValue("video_audio_mode", video_options.audio)
+        self.settings.setValue("video_keep_original", "true" if video_options.keep_original else "false")
         self.settings.setValue("folder_rule", self.folder_rule_combo.currentData())
         self.settings.setValue("filename_rule", self.filename_rule_combo.currentData())
         self.settings.setValue("custom_template", self.custom_template_input.text().strip())

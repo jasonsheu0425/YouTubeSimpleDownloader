@@ -1,4 +1,13 @@
-# YouTube Simple Downloader v0.8.0
+# YouTube Simple Downloader v0.9.0
+
+## v0.9.0 - Video Output Transcoding and osu! Compatibility
+
+- Added video processing modes: keep downloaded format, prefer compatible format, transcode after download, and osu! compatible video.
+- Added FFmpeg-based H.264 MP4 transcoding with yuv420p, CRF, preset, FPS, resolution, faststart, and audio removal options.
+- Added osu! compatible preset: MP4 / H.264 / yuv420p / max 720p / selectable 30 or 60 FPS / CRF 20 / no audio / faststart / `_osu_h264` suffix.
+- Added local video conversion for MP4, MKV, WEBM, MOV, and AVI files.
+- Added media probing support to display real container, codec, resolution, FPS, pixel format, duration, file size, and audio information.
+- Smoke test CLI now supports video processing, local video transcoding, and media probing options.
 
 ## v0.8.0 - Configurable Audio and Video Formats
 

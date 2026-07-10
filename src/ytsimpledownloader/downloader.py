@@ -13,7 +13,9 @@ import imageio_ffmpeg
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import download_range_func
 
+from .media_probe import probe_media
 from .paths import FFMPEG_DIR
+from .transcoder import VideoTranscodeOptions, VideoTranscoder
 
 
 DownloadMode = Literal["mp3", "mp4", "both"]
@@ -134,6 +136,7 @@ class SingleVideoDownloader:
         mp4_quality: Mp4Quality = "best",
         audio_format: AudioFormat = "mp3",
         video_format: VideoFormat = "mp4",
+        video_processing_options: VideoTranscodeOptions | None = None,
         output_options: OutputOptions | None = None,
         resume_downloads: bool = True,
     ) -> None:
@@ -146,6 +149,7 @@ class SingleVideoDownloader:
         self.mp4_quality = mp4_quality
         self.audio_format = self._validate_audio_format(audio_format)
         self.video_format = self._validate_video_format(video_format)
+        self.video_processing_options = video_processing_options or VideoTranscodeOptions()
         self.output_options = output_options or DEFAULT_OUTPUT_OPTIONS
         self.resume_downloads = resume_downloads
         self.ffmpeg_path = self._ensure_ffmpeg_exe()
@@ -171,7 +175,7 @@ class SingleVideoDownloader:
             thumbnail_url=info.get("thumbnail") or "",
             webpage_url=info.get("webpage_url") or clean_url,
             mp3_path=self.expected_output_path(info, self._audio_suffix(), playlist_title, playlist_index),
-            mp4_path=self.expected_output_path(info, self._video_suffix(), playlist_title, playlist_index),
+            mp4_path=self.expected_video_output_path(info, playlist_title, playlist_index),
             audio_format=self.audio_format,
             video_format=self.video_format,
         )
@@ -284,6 +288,25 @@ class SingleVideoDownloader:
         )
         path = self._expected_path(info, suffix, target_path)
         self._emit(f"{label} saved: {path}")
+
+        transcode_options = self.video_processing_options.normalized()
+        if transcode_options.needs_transcode() or (
+            transcode_options.prefer_compatible() and not self._is_video_compatible(path, transcode_options)
+        ):
+            if transcode_options.prefer_compatible():
+                self._emit("Downloaded video is not fully compatible; starting FFmpeg conversion...")
+            transcoder = VideoTranscoder(
+                self.ffmpeg_path,
+                progress_callback=self._emit,
+                cancel_event=self.cancel_event,
+            )
+            result = transcoder.transcode(
+                path,
+                transcode_options,
+                output_dir=path.parent,
+                file_exists_action=self.file_exists_action,
+            )
+            path = result.path
         return DownloadResult("mp4", path)
 
     def expected_output_path(
@@ -297,6 +320,21 @@ class SingleVideoDownloader:
         outtmpl = self._output_template(suffix, playlist_title, playlist_index)
         with YoutubeDL({"outtmpl": outtmpl, "windowsfilenames": True, "restrictfilenames": False}) as ydl:
             return Path(ydl.prepare_filename(prepared_info)).with_suffix(suffix)
+
+    def expected_video_output_path(
+        self,
+        info: dict,
+        playlist_title: str = "",
+        playlist_index: int | None = None,
+    ) -> Path:
+        source_path = self.expected_output_path(info, self._video_suffix(), playlist_title, playlist_index)
+        options = self.video_processing_options.normalized()
+        if not (options.needs_transcode() or options.prefer_compatible()):
+            return source_path
+        target = source_path.with_name(f"{source_path.stem}{options.suffix}{options.output_suffix()}")
+        if target.resolve() == source_path.resolve():
+            target = source_path.with_name(f"{source_path.stem}_converted{options.output_suffix()}")
+        return target
 
     def _extract_metadata(self, url: str) -> dict:
         with YoutubeDL(self._base_opts()) as ydl:
@@ -383,6 +421,9 @@ class SingleVideoDownloader:
         }
 
     def _video_format_selector(self) -> str:
+        options = self.video_processing_options.normalized()
+        if options.prefer_compatible() and options.container == "mp4" and options.video_codec == "h264":
+            return self._h264_mp4_format_selector()
         if self.video_format == "mp4":
             return self._mp4_format_selector()
         if self.video_format == "webm":
@@ -414,6 +455,31 @@ class SingleVideoDownloader:
 
         height = int(self.mp4_quality)
         return f"bv*[ext=webm][height<={height}]+ba[ext=webm]/b[ext=webm][height<={height}]"
+
+    def _h264_mp4_format_selector(self) -> str:
+        if self.mp4_quality == "best":
+            height_filter = ""
+        else:
+            height_filter = f"[height<={int(self.mp4_quality)}]"
+        return (
+            f"bv*[ext=mp4][vcodec^=avc1]{height_filter}+ba[ext=m4a]/"
+            f"b[ext=mp4][vcodec^=avc1]{height_filter}/"
+            f"bv*[ext=mp4]{height_filter}+ba[ext=m4a]/"
+            f"b[ext=mp4]{height_filter}/"
+            f"bv*{height_filter}+ba/best"
+        )
+
+    def _is_video_compatible(self, path: Path, options: VideoTranscodeOptions) -> bool:
+        media = probe_media(path, self.ffmpeg_path)
+        if media.error:
+            self._emit(f"Media probe note: {media.error}")
+        if options.container == "mp4" and path.suffix.lower() != ".mp4":
+            return False
+        if options.video_codec == "h264" and media.video_codec.lower() not in {"h264", "avc1"}:
+            return False
+        if options.pixel_format and media.pixel_format and options.pixel_format != media.pixel_format:
+            return False
+        return True
 
     def _progress_hook(self, data: dict) -> None:
         if self.cancel_event and self.cancel_event.is_set():
