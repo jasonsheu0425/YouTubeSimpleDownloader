@@ -1,4 +1,13 @@
-# YouTube Simple Downloader v0.9.0
+# YouTube Simple Downloader v0.9.1
+
+## v0.9.1 - Stabilization
+
+- Fixed local media probe duration parsing so ffprobe/FFmpeg probe summaries report duration correctly.
+- Added `schema_version` to new history entries while preserving older history records.
+- Added local pytest coverage for generated short-video probing, H.264 MP4 conversion, osu! compatible output, auto-number naming, and friendly transcode errors.
+- Added development test setup and clearer smoke-test documentation, including which checks require YouTube network access and which can run locally.
+- Confirmed v0.9.0 video conversion architecture remains split across downloader, transcoder, and media probe modules.
+- Documented SHA-256 installer verification for release downloads.
 
 ## v0.9.0 - Video Output Transcoding and osu! Compatibility
 

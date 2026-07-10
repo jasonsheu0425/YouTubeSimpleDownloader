@@ -60,6 +60,7 @@ from .transcoder import (
 
 HISTORY_PATH = PROJECT_DIR / "history.json"
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "app_icon.ico"
+SUPPORTED_LOCAL_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
 
 
 @dataclass
@@ -2500,7 +2501,7 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event) -> None:  # noqa: N802
         paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
-        videos = [path for path in paths if Path(path).suffix.lower() in {".mp4", ".mkv", ".webm", ".mov", ".avi"}]
+        videos = [path for path in paths if Path(path).suffix.lower() in SUPPORTED_LOCAL_VIDEO_SUFFIXES]
         if not videos:
             QMessageBox.warning(self, self.t("error"), self.t("local_video_error"))
             return
@@ -2509,7 +2510,7 @@ class MainWindow(QMainWindow):
     def start_local_transcode(self, paths: list[str]) -> None:
         if self.worker and self.worker.isRunning():
             return
-        videos = [str(Path(path)) for path in paths if Path(path).suffix.lower() in {".mp4", ".mkv", ".webm", ".mov", ".avi"}]
+        videos = [str(Path(path)) for path in paths if Path(path).suffix.lower() in SUPPORTED_LOCAL_VIDEO_SUFFIXES]
         if not videos:
             QMessageBox.warning(self, self.t("error"), self.t("local_video_error"))
             return
@@ -2651,6 +2652,7 @@ class MainWindow(QMainWindow):
         items.insert(
             0,
             {
+                "schema_version": 2,
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "title": info.title,
                 "url": url,
@@ -2684,6 +2686,7 @@ class MainWindow(QMainWindow):
         items.insert(
             0,
             {
+                "schema_version": 2,
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "title": entry.get("title") or Path(str(entry.get("source_path") or "")).stem,
                 "url": "",

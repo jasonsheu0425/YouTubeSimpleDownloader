@@ -54,6 +54,13 @@ C:\Windows\py.exe -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
+For local development tests:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest
+```
+
 ## Run GUI
 
 ```powershell
@@ -63,6 +70,10 @@ C:\Windows\py.exe -3.12 -m venv .venv
 Paste one video URL to see a preview, add video or playlist URLs to the queue, reorder the queue if needed, then start the download.
 
 ## CLI Smoke Test
+
+`smoke_download.py` can test both online YouTube downloads and local FFmpeg-only video conversion.
+Commands that pass a YouTube URL require network access and a public video/playlist that does not require login.
+Commands that use `--local-video` or `--probe` can run without YouTube access after FFmpeg is available.
 
 ```powershell
 .\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp3
@@ -108,6 +119,8 @@ Video transcoding smoke options:
 .\.venv\Scripts\python.exe tests\smoke_download.py --probe "C:\path\to\input.mp4"
 ```
 
+Pytest includes local short-video checks that generate a tiny test file with FFmpeg, then verify media probe, H.264 MP4 conversion, osu! compatible output, auto-number output naming, and friendly transcode error messages.
+
 Default output folder:
 
 ```text
@@ -124,4 +137,12 @@ Expected EXE:
 
 ```text
 E:\YouTubeSimpleDownloader\dist\YouTubeSimpleDownloader\YouTubeSimpleDownloader.exe
+```
+
+## Verify Installer SHA-256
+
+After downloading a release installer, compare its SHA-256 with the value published in the GitHub Release notes:
+
+```powershell
+Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.9.1-inno-self-signed.exe -Algorithm SHA256
 ```

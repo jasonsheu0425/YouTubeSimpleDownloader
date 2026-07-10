@@ -181,11 +181,11 @@ def _int_or_none(value: object) -> int | None:
 def _float_or_none(value: object) -> float | None:
     if value in (None, ""):
         return None
-
-
-def _clean_pixel_format(value: str) -> str:
-    return value.split("(", 1)[0].split(",", 1)[0].strip()
     try:
         return float(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _clean_pixel_format(value: str) -> str:
+    return value.split("(", 1)[0].split(",", 1)[0].strip()
