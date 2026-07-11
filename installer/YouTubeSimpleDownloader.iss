@@ -1,7 +1,8 @@
 ﻿#define MyAppName "YouTube Simple Downloader"
 #define MyAppExeName "YouTubeSimpleDownloader.exe"
-#define MyAppVersion "0.9.1"
+#define MyAppVersion "0.9.2"
 #define MyAppPublisher "Jason Test Signing"
+#define MyProjectDir ".."
 
 [Setup]
 AppId={{E6DB2227-B12B-48EE-8583-7E3D1D47C2C5}
@@ -9,15 +10,17 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\YouTubeSimpleDownloader
+UsePreviousAppDir=no
+DisableDirPage=no
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 PrivilegesRequired=lowest
 DisableProgramGroupPage=no
-LicenseFile=E:\YouTubeSimpleDownloader\installer\LICENSE.txt
-InfoAfterFile=E:\YouTubeSimpleDownloader\installer\README-INSTALLER.txt
-OutputDir=E:\YouTubeSimpleDownloader\release
-OutputBaseFilename=YouTubeSimpleDownloader_Setup_v0.9.1-inno-self-signed
-SetupIconFile=E:\YouTubeSimpleDownloader\src\ytsimpledownloader\assets\app_icon.ico
+LicenseFile={#MyProjectDir}\installer\LICENSE.txt
+InfoAfterFile={#MyProjectDir}\installer\README-INSTALLER.txt
+OutputDir={#MyProjectDir}\release
+OutputBaseFilename=YouTubeSimpleDownloader_Setup_v0.9.2-inno-self-signed
+SetupIconFile={#MyProjectDir}\src\ytsimpledownloader\assets\app_icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -34,7 +37,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "E:\YouTubeSimpleDownloader\dist\YouTubeSimpleDownloader\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyProjectDir}\dist\YouTubeSimpleDownloader\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

@@ -1,0 +1,37 @@
+name: Installation problem
+description: Report a setup, upgrade, shortcut, or uninstall problem.
+title: "[Install]: "
+labels: [installation]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Installer version
+      placeholder: "0.9.2"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+    validations:
+      required: true
+  - type: textarea
+    id: install_location
+    attributes:
+      label: Selected installation location
+      placeholder: "%LOCALAPPDATA%\\Programs\\YouTubeSimpleDownloader"
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Include the exact message and whether this was a new install or an upgrade. Remove personal paths if desired.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I did not include a certificate private key, token, cookie, or other secret.
+          required: true

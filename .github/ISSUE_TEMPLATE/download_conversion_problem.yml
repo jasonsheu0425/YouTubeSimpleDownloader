@@ -1,0 +1,67 @@
+name: Download or conversion problem
+description: Report a public video download, output format, or transcoding issue.
+title: "[Download]: "
+labels: [download]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: "0.9.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Download mode
+      options:
+        - Audio
+        - Video
+        - Audio + Video
+        - Local video conversion
+    validations:
+      required: true
+  - type: dropdown
+    id: audio_format
+    attributes:
+      label: Audio format
+      options:
+        - Not applicable
+        - MP3
+        - M4A
+        - OPUS
+        - WAV
+        - FLAC
+  - type: dropdown
+    id: video_format
+    attributes:
+      label: Video format
+      options:
+        - Not applicable
+        - MP4
+        - MKV
+        - WEBM
+  - type: dropdown
+    id: processing
+    attributes:
+      label: Video processing mode
+      options:
+        - Not applicable
+        - Keep downloaded format
+        - Prefer compatible format
+        - Transcode after download
+        - osu! compatible video
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened and what did you expect?
+      description: Include the friendly error message. Only include a public URL if you are allowed to share it.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This report does not request login, cookies, private, paid, members-only, or DRM-protected content support.
+          required: true

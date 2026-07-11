@@ -1,10 +1,10 @@
 $ErrorActionPreference = "Stop"
 
-$ProjectDir = "E:\YouTubeSimpleDownloader"
+$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppName = "YouTubeSimpleDownloader"
 $DisplayName = "YouTube Simple Downloader"
 $Publisher = "Jason Test Signing"
-$Version = "0.9.1"
+$Version = "0.9.2"
 $Subject = "CN=Jason YouTube Simple Downloader Test Signing"
 $DistDir = Join-Path $ProjectDir "dist\$AppName"
 $AppExe = Join-Path $DistDir "$AppName.exe"
@@ -58,21 +58,35 @@ if (!$appSig.SignerCertificate) {
 }
 
 $licensePath = Join-Path $ProjectDir "installer\LICENSE.txt"
-Set-Content -Path $licensePath -Encoding UTF8 -Value @"
+$licenseNotice = @"
 YouTube Simple Downloader
 
-This is a small personal utility for downloading public YouTube video or playlist URLs as audio, video, or both.
+This application downloads public YouTube video or playlist URLs as audio, video, or both.
 
-Current limitations:
+Responsible use:
 - Public video and playlist URLs only.
-- Private playlists require login and are not supported.
 - No login or cookie support.
+- No private, paid, members-only, or DRM-protected content support.
 - Use only for videos you have the right to save.
+
+This installer bundles the MIT License for the application. The full source and license are available at:
+https://github.com/jasonsheu0425/YouTubeSimpleDownloader
 "@
+$mitLicense = (Get-Content -Raw -Path (Join-Path $ProjectDir "LICENSE")).TrimEnd()
+Set-Content -Path $licensePath -Encoding UTF8 -Value "$licenseNotice`r`n`r`n$mitLicense"
 
 $readmePath = Join-Path $ProjectDir "installer\README-INSTALLER.txt"
 Set-Content -Path $readmePath -Encoding UTF8 -Value @"
-This installer is self-signed for friend-to-friend testing.
+Install location
+
+The default location is:
+%LOCALAPPDATA%\Programs\YouTubeSimpleDownloader
+
+The installer shows the destination page on every run and does not reuse a previous install location automatically.
+
+Signing
+
+This installer is self-signed for testing and friend-to-friend sharing.
 
 Windows may still show a warning because this is not a paid trusted code-signing certificate.
 The public test certificate is exported beside the installer:
@@ -85,6 +99,7 @@ $iss = @"
 #define MyAppExeName "$AppName.exe"
 #define MyAppVersion "$Version"
 #define MyAppPublisher "$Publisher"
+#define MyProjectDir "$ProjectDir"
 
 [Setup]
 AppId={{E6DB2227-B12B-48EE-8583-7E3D1D47C2C5}
@@ -92,15 +107,17 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\$AppName
+UsePreviousAppDir=no
+DisableDirPage=no
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 PrivilegesRequired=lowest
 DisableProgramGroupPage=no
-LicenseFile=$licensePath
-InfoAfterFile=$readmePath
-OutputDir=$OutputDir
+LicenseFile={#MyProjectDir}\installer\LICENSE.txt
+InfoAfterFile={#MyProjectDir}\installer\README-INSTALLER.txt
+OutputDir={#MyProjectDir}\release
 OutputBaseFilename=${AppName}_Setup_v$Version-inno-self-signed
-SetupIconFile=$IconPath
+SetupIconFile={#MyProjectDir}\src\ytsimpledownloader\assets\app_icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -117,7 +134,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "$DistDir\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyProjectDir}\dist\$AppName\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

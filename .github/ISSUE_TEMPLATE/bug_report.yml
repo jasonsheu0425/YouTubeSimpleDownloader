@@ -1,0 +1,59 @@
+name: Bug report
+description: Report an unexpected app behavior.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: "0.9.2"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: How did you run the app?
+      options:
+        - Installed EXE
+        - Source / development run
+    validations:
+      required: true
+  - type: dropdown
+    id: input_type
+    attributes:
+      label: Input type
+      options:
+        - Single video
+        - Multiple URLs
+        - Playlist
+        - Local video conversion
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: Describe the minimum safe steps. Only include a public URL if you are allowed to share it.
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message, log, or screenshot
+      description: Remove cookies, tokens, private URLs, and personal information first.
+  - type: checkboxes
+    id: reproducible
+    attributes:
+      label: Reproducibility
+      options:
+        - label: I can reproduce this issue consistently.
+        - label: I removed private information from the report.
+          required: true

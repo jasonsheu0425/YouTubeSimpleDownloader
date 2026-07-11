@@ -1,16 +1,3 @@
-﻿YouTube Simple Downloader
-
-This application downloads public YouTube video or playlist URLs as audio, video, or both.
-
-Responsible use:
-- Public video and playlist URLs only.
-- No login or cookie support.
-- No private, paid, members-only, or DRM-protected content support.
-- Use only for videos you have the right to save.
-
-This installer bundles the MIT License for the application. The full source and license are available at:
-https://github.com/jasonsheu0425/YouTubeSimpleDownloader
-
 MIT License
 
 Copyright (c) 2026 Jason Sheu

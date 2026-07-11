@@ -1,3 +1,16 @@
+# YouTube Simple Downloader v0.9.2
+
+## v0.9.2 - Installer Hardening and Open Source Cleanup
+
+- The Inno Setup installer now always shows the destination folder page and no longer reuses a prior installation directory automatically.
+- The default per-user installation location remains `%LOCALAPPDATA%\Programs\YouTubeSimpleDownloader`.
+- Refined settings spacing, column widths, and default window sizing so format and transcoding controls remain readable on normal desktop sizes.
+- Added the MIT License, contribution guide, security policy, GitHub issue forms, and Windows CI for local tests.
+- Split runtime, build, and development dependencies into `requirements.txt`, `requirements-build.txt`, and `requirements-dev.txt`.
+- Updated installer notes with installation location, self-signed certificate, and responsible-use information.
+
+Known limitation: the installer is still self-signed for testing. Windows may show a SmartScreen or trust warning because it is not signed with a paid trusted code-signing certificate.
+
 # YouTube Simple Downloader v0.9.1
 
 ## v0.9.1 - Stabilization

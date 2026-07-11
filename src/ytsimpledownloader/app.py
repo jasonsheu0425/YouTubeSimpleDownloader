@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QTextEdit,
@@ -1358,9 +1360,9 @@ class MainWindow(QMainWindow):
         return header, title
 
     def _build_layout(self) -> None:
-        self.setMinimumSize(1180, 760)
+        self.setMinimumSize(1260, 780)
         if not self.settings.contains("window_size"):
-            self.resize(1280, 860)
+            self.resize(1400, 880)
 
         self.input_group = QGroupBox()
         input_group_layout = QVBoxLayout(self.input_group)
@@ -1407,8 +1409,8 @@ class MainWindow(QMainWindow):
         settings_header, self.settings_title_label = self._section_header(2)
         settings_group_layout.addLayout(settings_header)
         settings_layout = QGridLayout()
-        settings_layout.setHorizontalSpacing(12)
-        settings_layout.setVerticalSpacing(8)
+        settings_layout.setHorizontalSpacing(16)
+        settings_layout.setVerticalSpacing(10)
         settings_layout.addWidget(self.mode_label, 0, 0)
         settings_layout.addWidget(self.mode_combo, 1, 0)
         settings_layout.addWidget(self.audio_format_label, 0, 1)
@@ -1419,38 +1421,40 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.video_format_combo, 1, 3)
         settings_layout.addWidget(self.mp4_quality_label, 0, 4)
         settings_layout.addWidget(self.mp4_quality_combo, 1, 4)
-        settings_layout.addWidget(self.folder_rule_label, 0, 5)
-        settings_layout.addWidget(self.folder_rule_combo, 1, 5)
-        settings_layout.addWidget(self.filename_rule_label, 0, 6)
-        settings_layout.addWidget(self.filename_rule_combo, 1, 6)
-        settings_layout.addWidget(self.custom_template_label, 0, 7)
-        settings_layout.addWidget(self.custom_template_input, 1, 7)
-        settings_layout.addWidget(self.language_label, 2, 0)
-        settings_layout.addWidget(self.language_combo, 3, 0)
-        settings_layout.addWidget(self.retry_label, 2, 1)
-        settings_layout.addWidget(self.retry_combo, 3, 1)
-        settings_layout.addWidget(self.notify_checkbox, 3, 2)
-        settings_layout.addWidget(self.skip_downloaded_checkbox, 3, 3)
-        settings_layout.addWidget(self.resume_checkbox, 3, 4, 1, 2)
-        settings_layout.addWidget(self.video_processing_label, 4, 0)
-        settings_layout.addWidget(self.video_processing_combo, 5, 0)
-        settings_layout.addWidget(self.video_codec_label, 4, 1)
-        settings_layout.addWidget(self.video_codec_combo, 5, 1)
-        settings_layout.addWidget(self.resolution_label, 4, 2)
-        settings_layout.addWidget(self.resolution_combo, 5, 2)
-        settings_layout.addWidget(self.fps_label, 4, 3)
-        settings_layout.addWidget(self.fps_combo, 5, 3)
-        settings_layout.addWidget(self.quality_label, 4, 4)
-        settings_layout.addWidget(self.quality_combo, 5, 4)
-        settings_layout.addWidget(self.crf_label, 4, 5)
-        settings_layout.addWidget(self.crf_spin, 5, 5)
-        settings_layout.addWidget(self.transcode_speed_label, 4, 6)
-        settings_layout.addWidget(self.transcode_speed_combo, 5, 6)
-        settings_layout.addWidget(self.video_audio_label, 6, 0)
-        settings_layout.addWidget(self.video_audio_combo, 7, 0)
-        settings_layout.addWidget(self.keep_original_checkbox, 7, 1, 1, 2)
-        settings_layout.addWidget(self.video_output_hint_label, 6, 3, 2, 5)
-        settings_layout.setColumnStretch(7, 2)
+        settings_layout.addWidget(self.folder_rule_label, 2, 0)
+        settings_layout.addWidget(self.folder_rule_combo, 3, 0)
+        settings_layout.addWidget(self.filename_rule_label, 2, 1)
+        settings_layout.addWidget(self.filename_rule_combo, 3, 1)
+        settings_layout.addWidget(self.custom_template_label, 2, 2, 1, 5)
+        settings_layout.addWidget(self.custom_template_input, 3, 2, 1, 5)
+        settings_layout.addWidget(self.language_label, 4, 0)
+        settings_layout.addWidget(self.language_combo, 5, 0)
+        settings_layout.addWidget(self.retry_label, 4, 1)
+        settings_layout.addWidget(self.retry_combo, 5, 1)
+        settings_layout.addWidget(self.notify_checkbox, 5, 2)
+        settings_layout.addWidget(self.skip_downloaded_checkbox, 5, 3)
+        settings_layout.addWidget(self.resume_checkbox, 5, 4, 1, 3)
+        settings_layout.addWidget(self.video_processing_label, 6, 0)
+        settings_layout.addWidget(self.video_processing_combo, 7, 0)
+        settings_layout.addWidget(self.video_codec_label, 6, 1)
+        settings_layout.addWidget(self.video_codec_combo, 7, 1)
+        settings_layout.addWidget(self.resolution_label, 6, 2)
+        settings_layout.addWidget(self.resolution_combo, 7, 2)
+        settings_layout.addWidget(self.fps_label, 6, 3)
+        settings_layout.addWidget(self.fps_combo, 7, 3)
+        settings_layout.addWidget(self.quality_label, 6, 4)
+        settings_layout.addWidget(self.quality_combo, 7, 4)
+        settings_layout.addWidget(self.crf_label, 6, 5)
+        settings_layout.addWidget(self.crf_spin, 7, 5)
+        settings_layout.addWidget(self.transcode_speed_label, 6, 6)
+        settings_layout.addWidget(self.transcode_speed_combo, 7, 6)
+        settings_layout.addWidget(self.video_audio_label, 8, 0)
+        settings_layout.addWidget(self.video_audio_combo, 9, 0)
+        settings_layout.addWidget(self.keep_original_checkbox, 9, 1, 1, 2)
+        settings_layout.addWidget(self.video_output_hint_label, 8, 3, 2, 4)
+        for column in range(7):
+            settings_layout.setColumnMinimumWidth(column, 116)
+        settings_layout.setColumnStretch(6, 2)
         settings_group_layout.addLayout(settings_layout)
 
         buttons = QHBoxLayout()
@@ -1585,7 +1589,12 @@ class MainWindow(QMainWindow):
 
         root = QWidget()
         root.setLayout(layout)
-        self.setCentralWidget(root)
+        root.setMinimumHeight(layout.sizeHint().height())
+        self.content_scroll = QScrollArea()
+        self.content_scroll.setWidgetResizable(True)
+        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.content_scroll.setWidget(root)
+        self.setCentralWidget(self.content_scroll)
         self.start_button.setObjectName("primaryButton")
         self.add_queue_button.setObjectName("accentButton")
         self.health_label.setObjectName("healthLabel")

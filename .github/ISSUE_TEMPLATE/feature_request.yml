@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest a focused improvement within the project's public-content scope.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This request does not require login or cookies.
+          required: true
+        - label: This request does not target private, paid, members-only, or DRM-protected content.
+          required: true

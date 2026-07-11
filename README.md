@@ -1,148 +1,152 @@
 # YouTube Simple Downloader
 
-Download public YouTube video URLs or playlist URLs as audio, video, or both.
+A Windows desktop application for saving public YouTube videos and playlists as audio, video, or both. It is built with PySide6, yt-dlp, imageio-ffmpeg, PyInstaller, and Inno Setup.
+
+## Download the latest release
+
+Download the installer from the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). The normal installer is:
+
+```text
+YouTubeSimpleDownloader_Setup_v0.9.2-inno-self-signed.exe
+```
+
+The installer defaults to the per-user location below and shows the destination page on every run. It does not reuse an older install folder automatically.
+
+```text
+%LOCALAPPDATA%\Programs\YouTubeSimpleDownloader
+```
+
+It creates a Start Menu shortcut and can create a desktop shortcut. No `E:` drive or development checkout is required to run the installed app.
 
 ## Features
 
 - Single public YouTube video URL, or multiple video URLs pasted one per line.
-- Public or unlisted YouTube playlist URLs that do not require login.
-- Playlist repeat runs can skip videos that already exist in the local download history, so the app only downloads newly added videos.
-- Preview title, channel, duration, thumbnail, and expected audio/video output paths before download when a single URL is entered.
-- Download queue supports adding URLs, expanding playlists, moving items up/down, removing items, and clearing the queue before starting.
-- Failed queue items can be retried without re-running completed items.
-- Optional automatic retries: none, 1, 2, or 3 retries per item.
-- Resume setting keeps unfinished `.part` files and lets yt-dlp continue partial downloads when possible.
-- Automatic folder grouping: no grouping, by download mode, by channel, by date, or by playlist.
-- Playlist grouping creates one folder per playlist, while single videos stay in the selected output folder.
-- Filename formats: title, channel - title, playlist number - title, upload date - title, or custom.
-- Batch mode downloads multiple URLs sequentially and continues after individual URL failures.
-- Playlist mode expands videos into the download queue before downloading.
+- Public or unlisted playlists that do not require login.
+- Queue management: add, reorder, remove, clear, retry failed items, and skip completed outputs.
+- Resume partially downloaded files when possible.
 - Download audio, video, or audio + video.
-- Audio formats: MP3, M4A, OPUS, WAV, FLAC.
-- Video formats: MP4, MKV, WEBM.
-- Video output and transcoding:
-  - Prefer downloading compatible H.264 MP4 formats.
-  - Convert videos to H.264 MP4 after download.
-  - osu! compatible video preset.
-  - Resolution, FPS, quality, CRF, transcode speed, and audio removal controls.
-  - Batch convert local video files.
-  - View real container, codec, resolution, FPS, pixel format, and audio information when probing/transcoding.
-- Choose MP3 quality: 128K, 192K, 256K, or 320K.
-- Choose MP4 quality: Best, 1080p, 720p, or 480p.
-- MP4 remains the recommended default video format; MKV and WEBM are available when needed.
-- Shows download percent, speed, ETA, and a progress bar.
-- If an output file already exists, choose overwrite, skip, or auto-number.
-- Result list supports opening the file, copying the path, and showing the file in Explorer.
-- Keeps a local download history.
-- Supports Traditional Chinese and English UI.
-- Can play a completion notification when downloads finish.
-- Includes one-click clear URL and clear status buttons.
-- Remembers the last output folder, download mode, audio/video formats, quality settings, output naming settings, auto retry setting, language, notification setting, and window size.
-- Uses `imageio-ffmpeg` to provide FFmpeg without a separate external FFmpeg install.
+- Audio formats: MP3, M4A, OPUS, WAV, and FLAC.
+- Video formats: MP4, MKV, and WEBM.
+- MP3 quality: 128K, 192K, 256K, and 320K.
+- Video quality: Best, 1080p, 720p, and 480p.
+- Folder grouping and filename formats, including playlist folders.
+- Preview title, channel, duration, thumbnail, and expected output paths.
+- Download history, result actions, and Traditional Chinese / English UI.
+- H.264 MP4 transcoding, an osu! compatible video preset, local video batch conversion, and media probing.
 
-MP4 is a container. A `.mp4` file may contain H.264, H.265, AV1, or other codecs. For maximum compatibility, use H.264 MP4 with `yuv420p`.
+MP4 is a container, not a codec guarantee. A `.mp4` file can contain H.264, H.265, AV1, or another codec. Choose H.264 MP4 with `yuv420p` when maximum compatibility matters.
 
-Resume note: partial audio/video downloads can usually continue from `.part` files. If an audio download was already in the FFmpeg conversion stage when interrupted, the conversion step may need to run again.
+The osu! preset outputs an MP4 with H.264, `yuv420p`, a maximum height of 720p without upscaling, no audio, `faststart`, and an `_osu_h264` filename suffix.
 
-## Setup
+## Scope and responsible use
+
+Use this application only for public or unlisted videos that you have the right to save. You are responsible for complying with YouTube's terms and applicable law.
+
+The application deliberately does not support:
+
+- Login or cookies.
+- Private, paid, members-only, or DRM-protected content.
+- Bypassing access restrictions.
+
+## Windows warning and self-signed installer
+
+The release installer is self-signed for testing and friend-to-friend sharing. Windows SmartScreen may show a warning because the project does not use a paid trusted code-signing certificate. The GitHub Release includes a SHA-256 value and the exported public test certificate for verification.
+
+Verify an installer after downloading it:
 
 ```powershell
-cd E:\YouTubeSimpleDownloader
-C:\Windows\py.exe -3.12 -m venv .venv
+Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.9.2-inno-self-signed.exe -Algorithm SHA256
+```
+
+Compare the reported hash with the value in the matching GitHub Release.
+
+## Basic use
+
+1. Paste one video URL to load its preview, or paste multiple URLs one per line.
+2. Choose audio, video, or audio + video, then select the desired formats and quality.
+3. Select an output folder and choose folder or filename rules if needed.
+4. Start downloading. Multiple URLs and playlists are expanded into the queue.
+5. Open the file, copy its path, or reveal it in Explorer from the result list.
+
+For a playlist that changes over time, leave **Skip previously downloaded videos** enabled. Later runs check the recorded output formats and download only missing videos or formats.
+
+## Developer setup
+
+Clone the repository instead of relying on a machine-specific path:
+
+```powershell
+git clone https://github.com/jasonsheu0425/YouTubeSimpleDownloader.git
+cd YouTubeSimpleDownloader
+py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
-For local development tests:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest
-```
-
-## Run GUI
+Run the GUI:
 
 ```powershell
 .\.venv\Scripts\python.exe -m ytsimpledownloader.app
 ```
 
-Paste one video URL to see a preview, add video or playlist URLs to the queue, reorder the queue if needed, then start the download.
+`requirements.txt` contains runtime dependencies. `requirements-build.txt` contains PyInstaller, and `requirements-dev.txt` contains test-only dependencies.
 
-## CLI Smoke Test
+## Tests
 
-`smoke_download.py` can test both online YouTube downloads and local FFmpeg-only video conversion.
-Commands that pass a YouTube URL require network access and a public video/playlist that does not require login.
-Commands that use `--local-video` or `--probe` can run without YouTube access after FFmpeg is available.
+Install development dependencies and run the local regression tests:
 
 ```powershell
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp3
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp4
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode both
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m compileall src tests
+.\.venv\Scripts\python.exe tests\smoke_download.py --help
 ```
 
-For a faster technical check, add `--test-seconds 10`.
+Pytest creates a short local video with FFmpeg and verifies media probing, H.264 MP4 conversion, the osu! preset, output auto-numbering, and friendly conversion errors. It does not download from YouTube.
 
-Output naming smoke options:
-
-```powershell
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/playlist?list=PLAYLIST_ID" --mode mp3 --folder-rule playlist --filename-rule playlist_index_title
-```
-
-Disable resume for a smoke test:
+`smoke_download.py` supports both local FFmpeg-only checks and online YouTube checks. Commands with URLs require network access and a public video or playlist that does not need login.
 
 ```powershell
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp3 --no-resume
-```
+# Online YouTube checks
+.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp3 --test-seconds 10
+.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode both --audio-format flac --video-format mkv --test-seconds 10
 
-Quality options:
-
-```powershell
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp3 --mp3-quality 128
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp4 --mp4-quality 720
-```
-
-Format options:
-
-```powershell
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp3 --audio-format flac
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp4 --video-format mkv
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode both --audio-format opus --video-format webm
-```
-
-Video transcoding smoke options:
-
-```powershell
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp4 --video-processing transcode --video-format mp4 --video-codec h264 --resolution 720 --fps 30 --video-audio remove --test-seconds 5
-.\.venv\Scripts\python.exe tests\smoke_download.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode mp4 --video-processing osu --fps 60 --test-seconds 5
-.\.venv\Scripts\python.exe tests\smoke_download.py --local-video "C:\path\to\input.mp4" --video-processing transcode --video-format mp4 --video-codec h264
+# Local checks, no YouTube access required
 .\.venv\Scripts\python.exe tests\smoke_download.py --probe "C:\path\to\input.mp4"
+.\.venv\Scripts\python.exe tests\smoke_download.py --local-video "C:\path\to\input.mp4" --video-processing transcode --video-format mp4 --video-codec h264
+.\.venv\Scripts\python.exe tests\smoke_download.py --local-video "C:\path\to\input.mp4" --video-processing osu --fps 60
 ```
 
-Pytest includes local short-video checks that generate a tiny test file with FFmpeg, then verify media probe, H.264 MP4 conversion, osu! compatible output, auto-number output naming, and friendly transcode error messages.
+## Build
 
-Default output folder:
-
-```text
-%USERPROFILE%\Downloads\YouTubeSimpleDownloader
-```
-
-## Build EXE
+Build the Windows application bundle:
 
 ```powershell
 .\build_exe.bat
 ```
 
-Expected EXE:
+Expected executable:
 
 ```text
-E:\YouTubeSimpleDownloader\dist\YouTubeSimpleDownloader\YouTubeSimpleDownloader.exe
+dist\YouTubeSimpleDownloader\YouTubeSimpleDownloader.exe
 ```
 
-## Verify Installer SHA-256
-
-After downloading a release installer, compare its SHA-256 with the value published in the GitHub Release notes:
+Build the self-signed Inno Setup installer after the EXE bundle is ready:
 
 ```powershell
-Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.9.1-inno-self-signed.exe -Algorithm SHA256
+.\build_inno_installer.ps1
 ```
+
+Expected installer:
+
+```text
+release\YouTubeSimpleDownloader_Setup_v0.9.2-inno-self-signed.exe
+```
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and contribution guidance. See [SECURITY.md](SECURITY.md) for how to report a security issue without exposing URLs, cookies, tokens, or other private information.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
