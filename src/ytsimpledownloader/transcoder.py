@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
-from shutil import copy2
 from threading import Event
 import subprocess
 import time
 from typing import Callable, Literal
 
-import imageio_ffmpeg
-
+from .ffmpeg_resolver import ensure_ffmpeg_exe as resolve_ffmpeg_exe
 from .media_probe import MediaInfo, probe_media
-from .paths import FFMPEG_DIR
 
 
 ProgressCallback = Callable[[str], None]
@@ -156,17 +152,8 @@ class TranscodeResult:
     skipped: bool = False
 
 
-def ensure_ffmpeg_exe() -> str:
-    source = Path(imageio_ffmpeg.get_ffmpeg_exe())
-    target = FFMPEG_DIR / "ffmpeg.exe"
-    if not target.exists() or target.stat().st_size != source.stat().st_size:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        copy2(source, target)
-    ffmpeg_dir = str(target.parent)
-    path_entries = os.environ.get("PATH", "").split(os.pathsep)
-    if ffmpeg_dir not in path_entries:
-        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
-    return str(target)
+def ensure_ffmpeg_exe(status_callback: Callable[[str], None] | None = None) -> str:
+    return resolve_ffmpeg_exe(status_callback)
 
 
 def ffmpeg_encoders(ffmpeg_path: str | Path | None = None) -> set[str]:
@@ -231,7 +218,7 @@ class VideoTranscoder:
         progress_callback: ProgressCallback | None = None,
         cancel_event: Event | None = None,
     ) -> None:
-        self.ffmpeg_path = str(ffmpeg_path or ensure_ffmpeg_exe())
+        self.ffmpeg_path = str(ffmpeg_path or ensure_ffmpeg_exe(progress_callback))
         self.progress_callback = progress_callback or (lambda _message: None)
         self.cancel_event = cancel_event
 

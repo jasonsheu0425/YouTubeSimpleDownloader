@@ -22,9 +22,9 @@ rmdir /s /q dist 2>nul
     --windowed ^
     --name YouTubeSimpleDownloader ^
     --paths src ^
+    --additional-hooks-dir hooks ^
     --icon "src\ytsimpledownloader\assets\app_icon.ico" ^
     --add-data "src\ytsimpledownloader\assets\app_icon.ico;ytsimpledownloader\assets" ^
-    --collect-all imageio_ffmpeg ^
     --collect-all yt_dlp ^
     --add-binary "ffmpeg\ffmpeg.exe;ffmpeg" ^
     run_app.py

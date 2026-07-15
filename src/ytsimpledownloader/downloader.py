@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
-from shutil import copy2
 from shutil import which
 from threading import Event
 from typing import Callable, Literal
 from urllib.parse import parse_qs, urlparse
 
-import imageio_ffmpeg
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import download_range_func
 
+from .ffmpeg_resolver import ensure_ffmpeg_exe
 from .media_probe import probe_media
-from .paths import FFMPEG_DIR
 from .transcoder import VideoTranscodeOptions, VideoTranscoder
 
 
@@ -588,13 +585,4 @@ class SingleVideoDownloader:
         self.progress_callback(message)
 
     def _ensure_ffmpeg_exe(self) -> str:
-        source = Path(imageio_ffmpeg.get_ffmpeg_exe())
-        target = FFMPEG_DIR / "ffmpeg.exe"
-        if not target.exists() or target.stat().st_size != source.stat().st_size:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            copy2(source, target)
-        ffmpeg_dir = str(target.parent)
-        path_entries = os.environ.get("PATH", "").split(os.pathsep)
-        if ffmpeg_dir not in path_entries:
-            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
-        return str(target)
+        return ensure_ffmpeg_exe(self.progress_callback)

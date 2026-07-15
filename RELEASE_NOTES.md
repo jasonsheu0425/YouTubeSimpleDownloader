@@ -1,3 +1,15 @@
+# YouTube Simple Downloader v0.9.3
+
+## v0.9.3 - FFmpeg Security Update
+
+- Updated bundled FFmpeg from 7.1 to 8.1.2.
+- Addresses CVE-2026-8461 exposure in the FFmpeg MagicYUV decoder by bundling a fixed FFmpeg version.
+- Unified FFmpeg resolution so development, dist, installer, and the AppData runtime copy use the verified bundled binary.
+- Removed the old imageio-ffmpeg bundled FFmpeg 7.1 binary from packaged output.
+- Rebuilt the EXE and Inno Setup installer with the updated FFmpeg binary.
+
+Known note: the `imageio-ffmpeg` dependency remains as a Python compatibility dependency, but its bundled old binary is no longer used or packaged.
+
 # YouTube Simple Downloader v0.9.2
 
 ## v0.9.2 - Installer Hardening and Open Source Cleanup
