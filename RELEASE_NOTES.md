@@ -1,3 +1,10 @@
+# Unreleased
+
+- Added an optional setting to embed the YouTube thumbnail in MP3 downloads as cover art.
+- Kept cover-art embedding disabled by default and limited it to MP3 output.
+- Added only the new `embed_audio_thumbnail` preference; existing settings keys and the history schema are unchanged.
+- No changes to video downloads, the osu! preset, or local transcoding.
+
 # YouTube Simple Downloader v0.9.4
 
 ## v0.9.4 - Stability and Build Integrity Update

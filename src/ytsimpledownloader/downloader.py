@@ -132,6 +132,7 @@ class SingleVideoDownloader:
         mp3_quality: Mp3Quality = "192",
         mp4_quality: Mp4Quality = "best",
         audio_format: AudioFormat = "mp3",
+        embed_audio_thumbnail: bool = False,
         video_format: VideoFormat = "mp4",
         video_processing_options: VideoTranscodeOptions | None = None,
         output_options: OutputOptions | None = None,
@@ -145,6 +146,7 @@ class SingleVideoDownloader:
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
         self.audio_format = self._validate_audio_format(audio_format)
+        self.embed_audio_thumbnail = bool(embed_audio_thumbnail)
         self.video_format = self._validate_video_format(video_format)
         self.video_processing_options = video_processing_options or VideoTranscodeOptions()
         self.output_options = output_options or DEFAULT_OUTPUT_OPTIONS
@@ -412,10 +414,18 @@ class SingleVideoDownloader:
         else:
             audio_selector = "bestaudio/best"
 
-        return {
+        postprocessors = [postprocessor]
+        options = {
             "format": audio_selector,
-            "postprocessors": [postprocessor],
+            "postprocessors": postprocessors,
         }
+        if self.embed_audio_thumbnail and self.audio_format == "mp3":
+            options["writethumbnail"] = True
+            postprocessors.append({
+                "key": "EmbedThumbnail",
+                "already_have_thumbnail": False,
+            })
+        return options
 
     def _video_format_selector(self) -> str:
         options = self.video_processing_options.normalized()

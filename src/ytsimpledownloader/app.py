@@ -92,6 +92,8 @@ TEXT = {
         "audio_format": "音訊格式",
         "video_format": "影片格式",
         "mp3_quality": "MP3 品質",
+        "embed_audio_thumbnail": "嵌入縮圖作為 MP3 封面",
+        "embed_audio_thumbnail_tooltip": "只支援 MP3。會將 YouTube 縮圖嵌入 MP3 作為封面圖。",
         "mp4_quality": "MP4 畫質",
         "video_processing": "影片處理模式",
         "video_processing_keep": "保留下載格式",
@@ -246,6 +248,8 @@ TEXT = {
         "audio_format": "Audio Format",
         "video_format": "Video Format",
         "mp3_quality": "MP3 Quality",
+        "embed_audio_thumbnail": "Embed thumbnail as MP3 cover art",
+        "embed_audio_thumbnail_tooltip": "MP3 only. Embeds the YouTube thumbnail in the MP3 as cover art.",
         "mp4_quality": "MP4 Quality",
         "video_processing": "Video Processing",
         "video_processing_keep": "Keep downloaded format",
@@ -500,6 +504,7 @@ class DownloadWorker(QThread):
         mp3_quality: str,
         mp4_quality: str,
         audio_format: str,
+        embed_audio_thumbnail: bool,
         video_format: str,
         video_processing_options: VideoTranscodeOptions,
         output_options: OutputOptions,
@@ -522,6 +527,7 @@ class DownloadWorker(QThread):
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
         self.audio_format = audio_format
+        self.embed_audio_thumbnail = embed_audio_thumbnail
         self.video_format = video_format
         self.video_processing_options = video_processing_options
         self.output_options = output_options
@@ -550,6 +556,7 @@ class DownloadWorker(QThread):
                 mp3_quality=self.mp3_quality,
                 mp4_quality=self.mp4_quality,
                 audio_format=self.audio_format,
+                embed_audio_thumbnail=self.embed_audio_thumbnail,
                 video_format=self.video_format,
                 video_processing_options=self.video_processing_options,
                 output_options=self.output_options,
@@ -1115,6 +1122,12 @@ class MainWindow(QMainWindow):
         if mp3_index >= 0:
             self.mp3_quality_combo.setCurrentIndex(mp3_index)
 
+        self.embed_audio_thumbnail_checkbox = QCheckBox()
+        self.embed_audio_thumbnail_checkbox.setChecked(
+            str(self.settings.value("embed_audio_thumbnail", "false")).lower() == "true"
+        )
+        self.embed_audio_thumbnail_checkbox.stateChanged.connect(lambda _state: self.save_settings())
+
         self.video_format_combo = QComboBox()
         for value in VIDEO_FORMATS:
             self.video_format_combo.addItem(value.upper(), value)
@@ -1421,6 +1434,7 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.video_format_combo, 1, 3)
         settings_layout.addWidget(self.mp4_quality_label, 0, 4)
         settings_layout.addWidget(self.mp4_quality_combo, 1, 4)
+        settings_layout.addWidget(self.embed_audio_thumbnail_checkbox, 1, 5, 1, 2)
         settings_layout.addWidget(self.folder_rule_label, 2, 0)
         settings_layout.addWidget(self.folder_rule_combo, 3, 0)
         settings_layout.addWidget(self.filename_rule_label, 2, 1)
@@ -1736,6 +1750,8 @@ class MainWindow(QMainWindow):
         self.audio_format_label.setText(self.t("audio_format"))
         self.video_format_label.setText(self.t("video_format"))
         self.mp3_quality_label.setText(self.t("mp3_quality"))
+        self.embed_audio_thumbnail_checkbox.setText(self.t("embed_audio_thumbnail"))
+        self.embed_audio_thumbnail_checkbox.setToolTip(self.t("embed_audio_thumbnail_tooltip"))
         self.mp4_quality_label.setText(self.t("mp4_quality"))
         self.video_processing_label.setText(self.t("video_processing"))
         for index, key in enumerate(
@@ -1898,6 +1914,7 @@ class MainWindow(QMainWindow):
         self.audio_format_combo.setEnabled(audio_enabled)
         self.mp3_quality_label.setEnabled(mp3_enabled)
         self.mp3_quality_combo.setEnabled(mp3_enabled)
+        self.embed_audio_thumbnail_checkbox.setEnabled(mp3_enabled)
         self.video_format_label.setEnabled(video_enabled)
         self.video_format_combo.setEnabled(video_enabled)
         self.mp4_quality_label.setEnabled(mp4_enabled)
@@ -2409,6 +2426,7 @@ class MainWindow(QMainWindow):
             self.mp3_quality_combo.currentData(),
             self.mp4_quality_combo.currentData(),
             audio_format,
+            self.embed_audio_thumbnail_checkbox.isChecked(),
             video_format,
             self.current_video_transcode_options(),
             self.output_options(),
@@ -2848,6 +2866,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("audio_format", self.current_audio_format())
         self.settings.setValue("video_format", self.current_video_format())
         self.settings.setValue("mp3_quality", self.mp3_quality_combo.currentData())
+        self.settings.setValue(
+            "embed_audio_thumbnail",
+            "true" if self.embed_audio_thumbnail_checkbox.isChecked() else "false",
+        )
         self.settings.setValue("mp4_quality", self.mp4_quality_combo.currentData())
         video_options = self.current_video_transcode_options()
         self.settings.setValue("video_processing_mode", video_options.mode)

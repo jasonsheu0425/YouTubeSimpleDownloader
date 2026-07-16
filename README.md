@@ -28,6 +28,7 @@ It creates a Start Menu shortcut and can create a desktop shortcut. No `E:` driv
 - Audio formats: MP3, M4A, OPUS, WAV, and FLAC.
 - Video formats: MP4, MKV, and WEBM.
 - MP3 quality: 128K, 192K, 256K, and 320K.
+- Optional MP3 thumbnail embedding as cover art.
 - Video quality: Best, 1080p, 720p, and 480p.
 - Folder grouping and filename formats, including playlist folders.
 - Preview title, channel, duration, thumbnail, and expected output paths.
