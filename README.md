@@ -137,6 +137,11 @@ Build the Windows application bundle:
 .\build_exe.bat
 ```
 
+The release build verifies `ffmpeg\ffmpeg.exe` against the SHA-256 policy in
+`security\artifact_hashes.json` before PyInstaller runs. The installer build
+repeats the same check against the bundled copy in `dist` and fails closed on a
+missing or mismatched artifact.
+
 Expected executable:
 
 ```text

@@ -13,6 +13,9 @@ if not exist ".venv\Scripts\python.exe" (
 ".venv\Scripts\python.exe" -m pip install -r requirements-build.txt
 ".venv\Scripts\python.exe" -m pip install -e .
 
+".venv\Scripts\python.exe" "scripts\check_ffmpeg_artifact.py" "ffmpeg\ffmpeg.exe"
+if errorlevel 1 exit /b %errorlevel%
+
 rmdir /s /q build 2>nul
 rmdir /s /q dist 2>nul
 

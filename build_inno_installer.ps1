@@ -8,6 +8,9 @@ $Version = "0.9.3"
 $Subject = "CN=Jason YouTube Simple Downloader Test Signing"
 $DistDir = Join-Path $ProjectDir "dist\$AppName"
 $AppExe = Join-Path $DistDir "$AppName.exe"
+$DistFfmpeg = Join-Path $DistDir "_internal\ffmpeg\ffmpeg.exe"
+$Python = Join-Path $ProjectDir ".venv\Scripts\python.exe"
+$ArtifactCheck = Join-Path $ProjectDir "scripts\check_ffmpeg_artifact.py"
 $IconPath = Join-Path $ProjectDir "src\ytsimpledownloader\assets\app_icon.ico"
 $OutputDir = Join-Path $ProjectDir "release"
 $CertPath = Join-Path $OutputDir "Jason-YouTubeSimpleDownloader-TestSigning.cer"
@@ -26,8 +29,19 @@ if (!$ISCC) {
 if (!(Test-Path $AppExe)) {
     throw "App EXE not found. Run build_exe.bat first: $AppExe"
 }
+if (!(Test-Path $Python)) {
+    throw "Project Python not found. Run build_exe.bat first: $Python"
+}
+if (!(Test-Path $ArtifactCheck)) {
+    throw "FFmpeg artifact verifier not found: $ArtifactCheck"
+}
 if (!(Test-Path $IconPath)) {
     throw "App icon not found: $IconPath"
+}
+
+& $Python $ArtifactCheck $DistFfmpeg
+if ($LASTEXITCODE -ne 0) {
+    throw "Dist FFmpeg artifact verification failed with exit code $LASTEXITCODE."
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDir, (Split-Path $IssPath) | Out-Null

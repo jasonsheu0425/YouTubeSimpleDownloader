@@ -29,11 +29,13 @@ jobs:
 
           $archive = Join-Path $env:RUNNER_TEMP "ffmpeg-release-essentials.zip"
           $extractDir = Join-Path $env:RUNNER_TEMP "ffmpeg-release-essentials"
-          $expectedArchiveHash = "DB580001CAA24AC104C8CB856CD113A87B0A443F7BDF47D8C12B1D740584A2EC"
-          $expectedFfmpegHash = "1326DDE4C84FF1F96FE6B8916C5BED29E163E9B5DCCF995F6F3DB069D143EC5E"
+          $policyPath = Join-Path $env:GITHUB_WORKSPACE "security\artifact_hashes.json"
+          $policy = (Get-Content -Raw -LiteralPath $policyPath | ConvertFrom-Json).artifacts.ffmpeg_windows_x64
+          $expectedArchiveHash = [string]$policy.archive_sha256
+          $expectedVersion = [string]$policy.version
 
           Invoke-WebRequest `
-            -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" `
+            -Uri ([string]$policy.source_url) `
             -OutFile $archive
 
           $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
@@ -49,9 +51,9 @@ jobs:
             throw "FFmpeg executable was not found in the verified archive."
           }
 
-          $sourceHash = (Get-FileHash -LiteralPath $ffmpegSource.FullName -Algorithm SHA256).Hash
-          if ($sourceHash -ne $expectedFfmpegHash) {
-            throw "ffmpeg.exe SHA-256 mismatch. Expected $expectedFfmpegHash, got $sourceHash."
+          python scripts/check_ffmpeg_artifact.py $ffmpegSource.FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw "Extracted FFmpeg artifact verification failed with exit code $LASTEXITCODE."
           }
 
           $targetDir = Join-Path $env:GITHUB_WORKSPACE "ffmpeg"
@@ -59,9 +61,9 @@ jobs:
           New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
           Copy-Item -LiteralPath $ffmpegSource.FullName -Destination $target -Force
 
-          $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
-          if ($targetHash -ne $expectedFfmpegHash) {
-            throw "Copied ffmpeg.exe SHA-256 mismatch. Expected $expectedFfmpegHash, got $targetHash."
+          python scripts/check_ffmpeg_artifact.py $target
+          if ($LASTEXITCODE -ne 0) {
+            throw "Copied FFmpeg artifact verification failed with exit code $LASTEXITCODE."
           }
 
           $versionOutput = & $target -version 2>&1
@@ -69,7 +71,8 @@ jobs:
             throw "ffmpeg.exe -version failed with exit code $LASTEXITCODE."
           }
           $versionLine = [string]($versionOutput | Select-Object -First 1)
-          if ($versionLine -notmatch "^ffmpeg version 8\.1\.2(?:-|\s)") {
+          $versionPattern = "^ffmpeg version $([regex]::Escape($expectedVersion))(?:-|\s)"
+          if ($versionLine -notmatch $versionPattern) {
             throw "Unexpected FFmpeg version: $versionLine"
           }
           $versionOutput

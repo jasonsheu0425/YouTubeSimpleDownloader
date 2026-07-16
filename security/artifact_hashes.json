@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "artifacts": {
+    "ffmpeg_windows_x64": {
+      "filename": "ffmpeg.exe",
+      "version": "8.1.2",
+      "source_url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+      "archive_sha256": "DB580001CAA24AC104C8CB856CD113A87B0A443F7BDF47D8C12B1D740584A2EC",
+      "sha256": "1326DDE4C84FF1F96FE6B8916C5BED29E163E9B5DCCF995F6F3DB069D143EC5E"
+    }
+  }
+}
