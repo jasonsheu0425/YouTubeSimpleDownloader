@@ -1,3 +1,20 @@
+# YouTube Simple Downloader v0.9.4
+
+## v0.9.4 - Stability and Build Integrity Update
+
+- Added release build FFmpeg SHA-256 verification before PyInstaller packaging.
+- Added dist FFmpeg SHA-256 verification before Inno installer packaging.
+- Centralized FFmpeg artifact metadata in `security/artifact_hashes.json`.
+- Reused the same FFmpeg verifier in CI and release build scripts.
+- Improved FFmpeg subprocess handling to avoid stdout/stderr pipe deadlock.
+- Improved cancellation behavior for FFmpeg transcodes.
+- Added inactivity timeout for stalled FFmpeg subprocesses.
+- Preserved progress parsing and stderr diagnostics.
+- Added regression tests for pipe pressure, cancellation, timeout, non-zero exit, and kill escalation.
+- No UI changes.
+- No history schema changes.
+- No QSettings key changes.
+
 # YouTube Simple Downloader v0.9.3
 
 ## v0.9.3 - FFmpeg Security Update
