@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event
+from queue import Empty, Queue
 import subprocess
+from threading import Event, Thread
 import time
-from typing import Callable, Literal
+from typing import Callable, Literal, TextIO
 
 from .ffmpeg_resolver import ensure_ffmpeg_exe as resolve_ffmpeg_exe
 from .media_probe import MediaInfo, probe_media
@@ -13,6 +14,12 @@ from .media_probe import MediaInfo, probe_media
 
 ProgressCallback = Callable[[str], None]
 FileExistsAction = Literal["overwrite", "skip", "number"]
+PipeName = Literal["stdout", "stderr"]
+
+DEFAULT_FFMPEG_INACTIVITY_TIMEOUT = 300.0
+DEFAULT_FFMPEG_TERMINATE_TIMEOUT = 5.0
+FFMPEG_PIPE_POLL_INTERVAL = 0.1
+FFMPEG_ERROR_TAIL_LINES = 25
 
 VIDEO_PROCESSING_MODES = ("keep", "prefer_compatible", "transcode", "osu")
 VIDEO_CODECS = ("copy", "h264", "h265", "av1")
@@ -217,10 +224,19 @@ class VideoTranscoder:
         ffmpeg_path: str | Path | None = None,
         progress_callback: ProgressCallback | None = None,
         cancel_event: Event | None = None,
+        *,
+        inactivity_timeout: float = DEFAULT_FFMPEG_INACTIVITY_TIMEOUT,
+        terminate_timeout: float = DEFAULT_FFMPEG_TERMINATE_TIMEOUT,
     ) -> None:
+        if inactivity_timeout <= 0:
+            raise ValueError("inactivity_timeout must be greater than zero")
+        if terminate_timeout <= 0:
+            raise ValueError("terminate_timeout must be greater than zero")
         self.ffmpeg_path = str(ffmpeg_path or ensure_ffmpeg_exe(progress_callback))
         self.progress_callback = progress_callback or (lambda _message: None)
         self.cancel_event = cancel_event
+        self.inactivity_timeout = float(inactivity_timeout)
+        self.terminate_timeout = float(terminate_timeout)
 
     def transcode(
         self,
@@ -394,40 +410,125 @@ class VideoTranscoder:
             bufsize=1,
         )
         start = time.monotonic()
+        last_output = start
         stderr_lines: list[str] = []
         assert process.stdout is not None
         assert process.stderr is not None
 
+        pipe_events: Queue[tuple[PipeName, str | None]] = Queue()
+        readers = [
+            Thread(
+                target=self._read_pipe,
+                args=("stdout", process.stdout, pipe_events),
+                name="ffmpeg-stdout-reader",
+                daemon=True,
+            ),
+            Thread(
+                target=self._read_pipe,
+                args=("stderr", process.stderr, pipe_events),
+                name="ffmpeg-stderr-reader",
+                daemon=True,
+            ),
+        ]
+        for reader in readers:
+            reader.start()
+
+        open_pipes: set[PipeName] = {"stdout", "stderr"}
+
         try:
             while True:
                 if self.cancel_event and self.cancel_event.is_set():
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
+                    self._terminate_process(process)
                     raise TranscodeCancelled("Transcode cancelled by user.")
 
-                line = process.stdout.readline()
-                if line:
-                    self._handle_progress_line(line.strip(), duration, start)
+                now = time.monotonic()
+                if process.poll() is None and now - last_output >= self.inactivity_timeout:
+                    self._terminate_process(process)
+                    message = (
+                        f"FFmpeg produced no output for {self.inactivity_timeout:g} seconds "
+                        "and was stopped."
+                    )
+                    if stderr_lines:
+                        message += "\nLast FFmpeg output:\n" + "\n".join(stderr_lines)
+                    raise RuntimeError(message)
 
-                stderr_line = process.stderr.readline()
-                if stderr_line:
-                    stderr_lines.append(stderr_line.strip())
-                    stderr_lines = stderr_lines[-25:]
+                wait_time = FFMPEG_PIPE_POLL_INTERVAL
+                if process.poll() is None:
+                    remaining = self.inactivity_timeout - (now - last_output)
+                    wait_time = min(wait_time, max(0.001, remaining))
 
-                if not line and not stderr_line and process.poll() is not None:
+                try:
+                    pipe_name, line = pipe_events.get(timeout=wait_time)
+                except Empty:
+                    if process.poll() is not None and not any(reader.is_alive() for reader in readers):
+                        break
+                    continue
+
+                if line is None:
+                    open_pipes.discard(pipe_name)
+                else:
+                    last_output = time.monotonic()
+                    cleaned_line = line.strip()
+                    if pipe_name == "stdout":
+                        self._handle_progress_line(cleaned_line, duration, start)
+                    elif cleaned_line:
+                        stderr_lines.append(cleaned_line)
+                        stderr_lines = stderr_lines[-FFMPEG_ERROR_TAIL_LINES:]
+
+                if not open_pipes and process.poll() is not None:
                     break
         finally:
             if process.poll() is None:
-                process.terminate()
+                self._terminate_process(process)
+            self._finish_pipe_readers(process, readers)
 
         return_code = process.wait()
         stderr_tail = "\n".join(stderr_lines)
         if return_code != 0:
             raise RuntimeError(stderr_tail or f"FFmpeg exited with code {return_code}")
         return stderr_tail
+
+    @staticmethod
+    def _read_pipe(
+        pipe_name: PipeName,
+        stream: TextIO,
+        pipe_events: Queue[tuple[PipeName, str | None]],
+    ) -> None:
+        try:
+            for line in iter(stream.readline, ""):
+                pipe_events.put((pipe_name, line))
+        finally:
+            pipe_events.put((pipe_name, None))
+
+    def _terminate_process(self, process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        process.terminate()
+        try:
+            process.wait(timeout=self.terminate_timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=self.terminate_timeout)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("FFmpeg did not exit after terminate and kill.") from exc
+
+    def _finish_pipe_readers(
+        self,
+        process: subprocess.Popen[str],
+        readers: list[Thread],
+    ) -> None:
+        deadline = time.monotonic() + self.terminate_timeout
+        for reader in readers:
+            reader.join(timeout=max(0.0, deadline - time.monotonic()))
+
+        for stream in (process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
+
+        for reader in readers:
+            if reader.is_alive():
+                reader.join(timeout=FFMPEG_PIPE_POLL_INTERVAL)
 
     def _handle_progress_line(self, line: str, duration: float | None, start: float) -> None:
         if not line or "=" not in line:
