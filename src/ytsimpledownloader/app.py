@@ -87,14 +87,17 @@ TEXT = {
         "output_folder": "輸出資料夾",
         "output_folder_error": "無法建立輸出資料夾",
         "browse": "瀏覽",
-        "mode": "下載模式",
+        "mode": "下載類型",
+        "mode_audio": "只下載音訊",
+        "mode_video": "只下載影片",
+        "mode_both": "下載音訊與影片",
         "language": "語言",
         "audio_format": "音訊格式",
         "video_format": "影片格式",
         "mp3_quality": "MP3 品質",
         "embed_audio_thumbnail": "嵌入縮圖作為 MP3 封面",
         "embed_audio_thumbnail_tooltip": "只支援 MP3。會將 YouTube 縮圖嵌入 MP3 作為封面圖。",
-        "mp4_quality": "MP4 畫質",
+        "mp4_quality": "下載畫質上限",
         "video_processing": "影片處理模式",
         "video_processing_keep": "保留下載格式",
         "video_processing_prefer": "優先下載相容格式",
@@ -103,12 +106,12 @@ TEXT = {
         "video_codec": "視訊編碼",
         "video_codec_copy": "保留原格式",
         "video_codec_h264": "H.264",
-        "resolution": "解析度",
+        "resolution": "轉檔輸出解析度",
         "resolution_original": "保持原始解析度",
         "resolution_custom": "自訂解析度",
         "fps": "幀率",
         "fps_original": "保持原始幀率",
-        "quality": "畫質",
+        "quality": "轉檔品質",
         "quality_high": "高畫質",
         "quality_balanced": "平衡",
         "quality_small": "小檔案",
@@ -119,7 +122,7 @@ TEXT = {
         "speed_fast": "快速",
         "speed_medium": "平衡",
         "speed_slow": "高壓縮",
-        "video_audio": "影片音訊",
+        "video_audio": "轉檔後音訊",
         "video_audio_keep": "保留音訊",
         "video_audio_remove": "移除音訊",
         "keep_original": "保留原始下載檔案",
@@ -139,6 +142,14 @@ TEXT = {
         "filename_playlist_index_title": "播放清單序號 - 標題",
         "filename_upload_date_title": "上傳日期 - 標題",
         "filename_custom": "自訂",
+        "basic_settings": "基本設定",
+        "advanced_settings": "進階設定",
+        "file_organization": "檔案整理",
+        "download_behavior": "下載行為",
+        "video_processing_section": "影片處理",
+        "queue_settings_hint": "開始下載時，目前設定會套用到整個佇列。",
+        "skip_downloaded_tooltip": "依下載歷史與目前輸出類型略過已完成項目；檔案同名碰撞會另行提示。",
+        "retry_failed_tooltip": "使用目前設定重新嘗試失敗項目。",
         "notify": "下載完成時提示",
         "start": "開始",
         "cancel": "取消",
@@ -243,14 +254,17 @@ TEXT = {
         "output_folder": "Output Folder",
         "output_folder_error": "Cannot create output folder",
         "browse": "Browse",
-        "mode": "Mode",
+        "mode": "Download Type",
+        "mode_audio": "Audio only",
+        "mode_video": "Video only",
+        "mode_both": "Audio and video",
         "language": "Language",
         "audio_format": "Audio Format",
         "video_format": "Video Format",
         "mp3_quality": "MP3 Quality",
         "embed_audio_thumbnail": "Embed thumbnail as MP3 cover art",
         "embed_audio_thumbnail_tooltip": "MP3 only. Embeds the YouTube thumbnail in the MP3 as cover art.",
-        "mp4_quality": "MP4 Quality",
+        "mp4_quality": "Download Quality Limit",
         "video_processing": "Video Processing",
         "video_processing_keep": "Keep downloaded format",
         "video_processing_prefer": "Prefer compatible format",
@@ -259,12 +273,12 @@ TEXT = {
         "video_codec": "Video Codec",
         "video_codec_copy": "Keep original",
         "video_codec_h264": "H.264",
-        "resolution": "Resolution",
+        "resolution": "Transcode Output Resolution",
         "resolution_original": "Original resolution",
         "resolution_custom": "Custom resolution",
         "fps": "FPS",
         "fps_original": "Original FPS",
-        "quality": "Quality",
+        "quality": "Transcode Quality",
         "quality_high": "High quality",
         "quality_balanced": "Balanced",
         "quality_small": "Small file",
@@ -275,7 +289,7 @@ TEXT = {
         "speed_fast": "Fast",
         "speed_medium": "Balanced",
         "speed_slow": "Smaller File",
-        "video_audio": "Video Audio",
+        "video_audio": "Audio After Transcode",
         "video_audio_keep": "Keep audio",
         "video_audio_remove": "Remove audio",
         "keep_original": "Keep original downloaded file",
@@ -295,6 +309,14 @@ TEXT = {
         "filename_playlist_index_title": "Playlist number - Title",
         "filename_upload_date_title": "Upload date - Title",
         "filename_custom": "Custom",
+        "basic_settings": "Basic Settings",
+        "advanced_settings": "Advanced Settings",
+        "file_organization": "File Organization",
+        "download_behavior": "Download Behavior",
+        "video_processing_section": "Video Processing",
+        "queue_settings_hint": "The current settings apply to the entire queue when downloading starts.",
+        "skip_downloaded_tooltip": "Uses download history and the current output type to skip completed items; filename collisions are handled separately.",
+        "retry_failed_tooltip": "Retry failed items using the current settings.",
         "notify": "Notify when complete",
         "start": "Start",
         "cancel": "Cancel",
@@ -394,6 +416,38 @@ TEXT = {
         "local_video_error": "Please choose supported video files: mp4, mkv, webm, mov, avi.",
     },
 }
+
+
+MODE_TEXT_KEYS = {
+    "mp3": "mode_audio",
+    "mp4": "mode_video",
+    "both": "mode_both",
+}
+
+LEGACY_MODE_VALUES = {
+    "mp3": "mp3",
+    "mp4": "mp4",
+    "both": "both",
+    "mp3 + mp4": "both",
+    "只下載音訊": "mp3",
+    "只下載影片": "mp4",
+    "下載音訊與影片": "both",
+    "audio only": "mp3",
+    "video only": "mp4",
+    "audio and video": "both",
+}
+
+
+def normalize_download_mode(value: object, default: str | None = "mp3") -> str | None:
+    normalized = LEGACY_MODE_VALUES.get(str(value or "").strip().lower())
+    return normalized if normalized is not None else default
+
+
+def download_mode_text(mode: object, language: str) -> str:
+    normalized = normalize_download_mode(mode, None)
+    if normalized is None:
+        return str(mode or "")
+    return TEXT[language][MODE_TEXT_KEYS[normalized]]
 
 
 class PreviewWorker(QThread):
@@ -1045,6 +1099,7 @@ class MainWindow(QMainWindow):
         self.worker: DownloadWorker | LocalTranscodeWorker | None = None
         self.preview_worker: PreviewWorker | None = None
         self.queue_worker: QueueBuildWorker | None = None
+        self._running = False
         self.download_queue: list[QueueTask] = []
         self.current_info: VideoInfo | None = None
         self.current_info_url = ""
@@ -1077,6 +1132,17 @@ class MainWindow(QMainWindow):
         self.results_header = QLabel()
         self.history_header = QLabel()
         self.status_header = QLabel()
+        self.basic_settings_title_label = QLabel()
+        self.file_organization_title_label = QLabel()
+        self.download_behavior_title_label = QLabel()
+        self.video_processing_title_label = QLabel()
+        for label in (
+            self.basic_settings_title_label,
+            self.file_organization_title_label,
+            self.download_behavior_title_label,
+            self.video_processing_title_label,
+        ):
+            label.setObjectName("subsectionTitle")
 
         self.url_input = QTextEdit()
         self.url_input.setAcceptRichText(False)
@@ -1098,10 +1164,10 @@ class MainWindow(QMainWindow):
         self.language_combo.currentIndexChanged.connect(self.change_language)
 
         self.mode_combo = QComboBox()
-        self.mode_combo.addItem("MP3", "mp3")
-        self.mode_combo.addItem("MP4", "mp4")
-        self.mode_combo.addItem("MP3 + MP4", "both")
-        saved_mode = self.settings.value("mode", "mp3")
+        self.mode_combo.addItem("", "mp3")
+        self.mode_combo.addItem("", "mp4")
+        self.mode_combo.addItem("", "both")
+        saved_mode = normalize_download_mode(self.settings.value("mode", "mp3"))
         saved_index = self.mode_combo.findData(saved_mode)
         if saved_index >= 0:
             self.mode_combo.setCurrentIndex(saved_index)
@@ -1270,6 +1336,12 @@ class MainWindow(QMainWindow):
             self.retry_combo.setCurrentIndex(retry_index)
         self.retry_combo.currentIndexChanged.connect(lambda _index: self.save_settings())
 
+        self.advanced_toggle_button = QPushButton()
+        self.advanced_toggle_button.setObjectName("advancedToggle")
+        self.advanced_toggle_button.setCheckable(True)
+        self.advanced_toggle_button.setChecked(False)
+        self.advanced_toggle_button.toggled.connect(self.toggle_advanced_settings)
+
         self.start_button = QPushButton()
         self.start_button.clicked.connect(self.start_download)
         self.add_queue_button = QPushButton()
@@ -1318,6 +1390,8 @@ class MainWindow(QMainWindow):
 
         self.queue_list = QListWidget()
         self.queue_list.currentItemChanged.connect(lambda _current, _previous: self.update_queue_buttons())
+        self.queue_hint_label = QLabel()
+        self.queue_hint_label.setObjectName("mutedLabel")
 
         self.history_list = QListWidget()
         self.history_list.itemDoubleClicked.connect(self.open_selected_history_file)
@@ -1421,55 +1495,121 @@ class MainWindow(QMainWindow):
         settings_group_layout.setSpacing(8)
         settings_header, self.settings_title_label = self._section_header(2)
         settings_group_layout.addLayout(settings_header)
-        settings_layout = QGridLayout()
-        settings_layout.setHorizontalSpacing(16)
-        settings_layout.setVerticalSpacing(10)
-        settings_layout.addWidget(self.mode_label, 0, 0)
-        settings_layout.addWidget(self.mode_combo, 1, 0)
-        settings_layout.addWidget(self.audio_format_label, 0, 1)
-        settings_layout.addWidget(self.audio_format_combo, 1, 1)
-        settings_layout.addWidget(self.mp3_quality_label, 0, 2)
-        settings_layout.addWidget(self.mp3_quality_combo, 1, 2)
-        settings_layout.addWidget(self.video_format_label, 0, 3)
-        settings_layout.addWidget(self.video_format_combo, 1, 3)
-        settings_layout.addWidget(self.mp4_quality_label, 0, 4)
-        settings_layout.addWidget(self.mp4_quality_combo, 1, 4)
-        settings_layout.addWidget(self.embed_audio_thumbnail_checkbox, 1, 5, 1, 2)
-        settings_layout.addWidget(self.folder_rule_label, 2, 0)
-        settings_layout.addWidget(self.folder_rule_combo, 3, 0)
-        settings_layout.addWidget(self.filename_rule_label, 2, 1)
-        settings_layout.addWidget(self.filename_rule_combo, 3, 1)
-        settings_layout.addWidget(self.custom_template_label, 2, 2, 1, 5)
-        settings_layout.addWidget(self.custom_template_input, 3, 2, 1, 5)
-        settings_layout.addWidget(self.language_label, 4, 0)
-        settings_layout.addWidget(self.language_combo, 5, 0)
-        settings_layout.addWidget(self.retry_label, 4, 1)
-        settings_layout.addWidget(self.retry_combo, 5, 1)
-        settings_layout.addWidget(self.notify_checkbox, 5, 2)
-        settings_layout.addWidget(self.skip_downloaded_checkbox, 5, 3)
-        settings_layout.addWidget(self.resume_checkbox, 5, 4, 1, 3)
-        settings_layout.addWidget(self.video_processing_label, 6, 0)
-        settings_layout.addWidget(self.video_processing_combo, 7, 0)
-        settings_layout.addWidget(self.video_codec_label, 6, 1)
-        settings_layout.addWidget(self.video_codec_combo, 7, 1)
-        settings_layout.addWidget(self.resolution_label, 6, 2)
-        settings_layout.addWidget(self.resolution_combo, 7, 2)
-        settings_layout.addWidget(self.fps_label, 6, 3)
-        settings_layout.addWidget(self.fps_combo, 7, 3)
-        settings_layout.addWidget(self.quality_label, 6, 4)
-        settings_layout.addWidget(self.quality_combo, 7, 4)
-        settings_layout.addWidget(self.crf_label, 6, 5)
-        settings_layout.addWidget(self.crf_spin, 7, 5)
-        settings_layout.addWidget(self.transcode_speed_label, 6, 6)
-        settings_layout.addWidget(self.transcode_speed_combo, 7, 6)
-        settings_layout.addWidget(self.video_audio_label, 8, 0)
-        settings_layout.addWidget(self.video_audio_combo, 9, 0)
-        settings_layout.addWidget(self.keep_original_checkbox, 9, 1, 1, 2)
-        settings_layout.addWidget(self.video_output_hint_label, 8, 3, 2, 4)
-        for column in range(7):
-            settings_layout.setColumnMinimumWidth(column, 116)
-        settings_layout.setColumnStretch(6, 2)
-        settings_group_layout.addLayout(settings_layout)
+        settings_group_layout.addWidget(self.basic_settings_title_label)
+
+        self.basic_settings_widget = QWidget()
+        basic_settings_layout = QHBoxLayout(self.basic_settings_widget)
+        basic_settings_layout.setContentsMargins(0, 0, 0, 0)
+        basic_settings_layout.setSpacing(16)
+
+        mode_panel = QWidget()
+        mode_layout = QVBoxLayout(mode_panel)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(6)
+        mode_layout.addWidget(self.mode_label)
+        mode_layout.addWidget(self.mode_combo)
+        mode_layout.addStretch(1)
+
+        self.audio_settings_panel = QFrame()
+        self.audio_settings_panel.setObjectName("settingsSection")
+        audio_layout = QGridLayout(self.audio_settings_panel)
+        audio_layout.setContentsMargins(10, 8, 10, 8)
+        audio_layout.setHorizontalSpacing(12)
+        audio_layout.setVerticalSpacing(6)
+        audio_layout.addWidget(self.audio_format_label, 0, 0)
+        audio_layout.addWidget(self.mp3_quality_label, 0, 1)
+        audio_layout.addWidget(self.audio_format_combo, 1, 0)
+        audio_layout.addWidget(self.mp3_quality_combo, 1, 1)
+        audio_layout.addWidget(self.embed_audio_thumbnail_checkbox, 2, 0, 1, 2)
+        audio_layout.setColumnStretch(0, 1)
+        audio_layout.setColumnStretch(1, 1)
+
+        self.video_settings_panel = QFrame()
+        self.video_settings_panel.setObjectName("settingsSection")
+        video_layout = QGridLayout(self.video_settings_panel)
+        video_layout.setContentsMargins(10, 8, 10, 8)
+        video_layout.setHorizontalSpacing(12)
+        video_layout.setVerticalSpacing(6)
+        video_layout.addWidget(self.video_format_label, 0, 0)
+        video_layout.addWidget(self.mp4_quality_label, 0, 1)
+        video_layout.addWidget(self.video_format_combo, 1, 0)
+        video_layout.addWidget(self.mp4_quality_combo, 1, 1)
+        video_layout.setColumnStretch(0, 1)
+        video_layout.setColumnStretch(1, 1)
+
+        basic_settings_layout.addWidget(mode_panel, 1)
+        basic_settings_layout.addWidget(self.audio_settings_panel, 3)
+        basic_settings_layout.addWidget(self.video_settings_panel, 2)
+        settings_group_layout.addWidget(self.basic_settings_widget)
+        settings_group_layout.addWidget(self.advanced_toggle_button)
+
+        self.advanced_settings_widget = QWidget()
+        advanced_layout = QVBoxLayout(self.advanced_settings_widget)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(8)
+
+        file_organization_panel = QFrame()
+        file_organization_panel.setObjectName("settingsSection")
+        file_organization_layout = QGridLayout(file_organization_panel)
+        file_organization_layout.setContentsMargins(10, 8, 10, 8)
+        file_organization_layout.setHorizontalSpacing(12)
+        file_organization_layout.setVerticalSpacing(6)
+        file_organization_layout.addWidget(self.file_organization_title_label, 0, 0, 1, 4)
+        file_organization_layout.addWidget(self.folder_rule_label, 1, 0)
+        file_organization_layout.addWidget(self.filename_rule_label, 1, 1)
+        file_organization_layout.addWidget(self.custom_template_label, 1, 2, 1, 2)
+        file_organization_layout.addWidget(self.folder_rule_combo, 2, 0)
+        file_organization_layout.addWidget(self.filename_rule_combo, 2, 1)
+        file_organization_layout.addWidget(self.custom_template_input, 2, 2, 1, 2)
+        file_organization_layout.setColumnStretch(2, 2)
+
+        download_behavior_panel = QFrame()
+        download_behavior_panel.setObjectName("settingsSection")
+        download_behavior_layout = QGridLayout(download_behavior_panel)
+        download_behavior_layout.setContentsMargins(10, 8, 10, 8)
+        download_behavior_layout.setHorizontalSpacing(12)
+        download_behavior_layout.setVerticalSpacing(6)
+        download_behavior_layout.addWidget(self.download_behavior_title_label, 0, 0, 1, 5)
+        download_behavior_layout.addWidget(self.language_label, 1, 0)
+        download_behavior_layout.addWidget(self.retry_label, 1, 1)
+        download_behavior_layout.addWidget(self.language_combo, 2, 0)
+        download_behavior_layout.addWidget(self.retry_combo, 2, 1)
+        download_behavior_layout.addWidget(self.notify_checkbox, 2, 2)
+        download_behavior_layout.addWidget(self.skip_downloaded_checkbox, 2, 3)
+        download_behavior_layout.addWidget(self.resume_checkbox, 2, 4)
+
+        self.video_processing_panel = QFrame()
+        self.video_processing_panel.setObjectName("settingsSection")
+        processing_layout = QGridLayout(self.video_processing_panel)
+        processing_layout.setContentsMargins(10, 8, 10, 8)
+        processing_layout.setHorizontalSpacing(12)
+        processing_layout.setVerticalSpacing(6)
+        processing_layout.addWidget(self.video_processing_title_label, 0, 0, 1, 7)
+        processing_layout.addWidget(self.video_processing_label, 1, 0)
+        processing_layout.addWidget(self.video_codec_label, 1, 1)
+        processing_layout.addWidget(self.resolution_label, 1, 2)
+        processing_layout.addWidget(self.fps_label, 1, 3)
+        processing_layout.addWidget(self.quality_label, 1, 4)
+        processing_layout.addWidget(self.crf_label, 1, 5)
+        processing_layout.addWidget(self.transcode_speed_label, 1, 6)
+        processing_layout.addWidget(self.video_processing_combo, 2, 0)
+        processing_layout.addWidget(self.video_codec_combo, 2, 1)
+        processing_layout.addWidget(self.resolution_combo, 2, 2)
+        processing_layout.addWidget(self.fps_combo, 2, 3)
+        processing_layout.addWidget(self.quality_combo, 2, 4)
+        processing_layout.addWidget(self.crf_spin, 2, 5)
+        processing_layout.addWidget(self.transcode_speed_combo, 2, 6)
+        processing_layout.addWidget(self.video_audio_label, 3, 0)
+        processing_layout.addWidget(self.video_audio_combo, 4, 0)
+        processing_layout.addWidget(self.keep_original_checkbox, 4, 1, 1, 2)
+        processing_layout.addWidget(self.video_output_hint_label, 3, 3, 2, 4)
+        processing_layout.setColumnStretch(6, 1)
+
+        advanced_layout.addWidget(file_organization_panel)
+        advanced_layout.addWidget(download_behavior_panel)
+        advanced_layout.addWidget(self.video_processing_panel)
+        settings_group_layout.addWidget(self.advanced_settings_widget)
+        self.advanced_settings_widget.setVisible(False)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
@@ -1522,6 +1662,7 @@ class MainWindow(QMainWindow):
         queue_group_layout.setSpacing(8)
         queue_header, self.queue_title_label = self._section_header(4)
         queue_group_layout.addLayout(queue_header)
+        queue_group_layout.addWidget(self.queue_hint_label)
         queue_group_layout.addWidget(self.queue_list, 1)
         queue_group_layout.addLayout(queue_buttons)
 
@@ -1645,6 +1786,10 @@ class MainWindow(QMainWindow):
                 color: #f1f3f4;
                 font-weight: 700;
             }
+            QLabel#subsectionTitle {
+                color: #c9d1d9;
+                font-weight: 700;
+            }
             QLabel#mutedLabel {
                 color: #aeb6bf;
             }
@@ -1652,7 +1797,7 @@ class MainWindow(QMainWindow):
                 color: #7ee787;
                 font-weight: 600;
             }
-            QLineEdit, QTextEdit, QListWidget, QComboBox {
+            QLineEdit, QTextEdit, QListWidget, QComboBox, QSpinBox {
                 background: #22272e;
                 color: #f1f3f4;
                 border: 1px solid #3a424c;
@@ -1696,6 +1841,15 @@ class MainWindow(QMainWindow):
             QPushButton#accentButton {
                 min-width: 120px;
             }
+            QPushButton#advancedToggle {
+                text-align: left;
+                background: #1f242a;
+            }
+            QFrame#settingsSection {
+                background: #191d21;
+                border: 1px solid #30363d;
+                border-radius: 6px;
+            }
             QCheckBox {
                 spacing: 7px;
                 color: #f1f3f4;
@@ -1707,6 +1861,14 @@ class MainWindow(QMainWindow):
             QComboBox::drop-down {
                 width: 24px;
                 border-left: 1px solid #3a424c;
+            }
+            QLabel:disabled, QCheckBox:disabled {
+                color: #8b949e;
+            }
+            QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
+                color: #8b949e;
+                background: #1b1f23;
+                border-color: #2d333b;
             }
             QProgressBar {
                 background: #24292f;
@@ -1746,6 +1908,8 @@ class MainWindow(QMainWindow):
         self.url_label.setText(self.t("url"))
         self.output_label.setText(self.t("output_folder"))
         self.mode_label.setText(self.t("mode"))
+        for index, mode in enumerate(("mp3", "mp4", "both")):
+            self.mode_combo.setItemText(index, self.t(MODE_TEXT_KEYS[mode]))
         self.language_label.setText(self.t("language"))
         self.audio_format_label.setText(self.t("audio_format"))
         self.video_format_label.setText(self.t("video_format"))
@@ -1811,6 +1975,7 @@ class MainWindow(QMainWindow):
         self.browse_button.setText(self.t("browse"))
         self.notify_checkbox.setText(self.t("notify"))
         self.skip_downloaded_checkbox.setText(self.t("skip_downloaded"))
+        self.skip_downloaded_checkbox.setToolTip(self.t("skip_downloaded_tooltip"))
         self.resume_checkbox.setText(self.t("resume_downloads"))
         self.paste_url_button.setText("貼上" if self.language == "zh" else "Paste")
         self.add_queue_button.setText(self.t("add_queue"))
@@ -1827,6 +1992,8 @@ class MainWindow(QMainWindow):
         self.remove_queue_button.setText(self.t("remove_queue"))
         self.clear_queue_button.setText(self.t("clear_queue"))
         self.retry_failed_button.setText(self.t("retry_failed"))
+        self.retry_failed_button.setToolTip(self.t("retry_failed_tooltip"))
+        self.queue_hint_label.setText(self.t("queue_settings_hint"))
         self.results_header.setText(self.t("results"))
         self.history_header.setText(self.t("history"))
         self.status_header.setText(self.t("status"))
@@ -1837,6 +2004,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "input_group"):
             self.input_title_label.setText("輸入" if self.language == "zh" else "Input")
             self.settings_title_label.setText("下載設定" if self.language == "zh" else "Download Settings")
+            self.basic_settings_title_label.setText(self.t("basic_settings"))
+            self.file_organization_title_label.setText(self.t("file_organization"))
+            self.download_behavior_title_label.setText(self.t("download_behavior"))
+            self.video_processing_title_label.setText(self.t("video_processing_section"))
+            self.update_advanced_toggle_text()
             self.preview_title_label.setText("影片預覽（單一 URL）" if self.language == "zh" else "Preview (Single URL)")
             self.queue_title_label.setText("下載佇列" if self.language == "zh" else "Download Queue")
             self.progress_title_label.setText("目前下載進度" if self.language == "zh" else "Current Progress")
@@ -1853,16 +2025,27 @@ class MainWindow(QMainWindow):
         self.refresh_queue()
         self.refresh_history()
         self.update_custom_template_controls()
+        self.update_quality_controls()
         self.update_video_processing_controls()
+        self.update_preview_path_visibility()
 
     def change_language(self) -> None:
         self.language = self.language_combo.currentData()
         self.save_settings()
         self.update_language()
 
+    def toggle_advanced_settings(self, expanded: bool) -> None:
+        self.advanced_settings_widget.setVisible(expanded)
+        self.update_advanced_toggle_text()
+
+    def update_advanced_toggle_text(self) -> None:
+        marker = "▼" if self.advanced_toggle_button.isChecked() else "▶"
+        self.advanced_toggle_button.setText(f"{marker} {self.t('advanced_settings')}")
+
     def handle_mode_changed(self) -> None:
         self.update_quality_controls()
         self.update_video_processing_controls()
+        self.update_preview_path_visibility()
         self.save_settings()
         self.schedule_preview()
 
@@ -1896,13 +2079,17 @@ class MainWindow(QMainWindow):
         self.schedule_preview()
 
     def update_custom_template_controls(self) -> None:
-        enabled = self.filename_rule_combo.currentData() == "custom" and self.filename_rule_combo.isEnabled()
+        enabled = (
+            not self._running
+            and self.filename_rule_combo.currentData() == "custom"
+            and self.filename_rule_combo.isEnabled()
+        )
         self.custom_template_label.setEnabled(enabled)
         self.custom_template_input.setEnabled(enabled)
 
     def update_quality_controls(self, base_enabled: bool | None = None) -> None:
         if base_enabled is None:
-            base_enabled = self.mode_combo.isEnabled()
+            base_enabled = not self._running
 
         mode = self.mode_combo.currentData()
         audio_enabled = base_enabled and mode in ("mp3", "both")
@@ -1910,6 +2097,10 @@ class MainWindow(QMainWindow):
         mp3_enabled = audio_enabled and self.audio_format_combo.currentData() == "mp3"
         mp4_enabled = video_enabled
 
+        self.audio_settings_panel.setVisible(mode in ("mp3", "both"))
+        self.video_settings_panel.setVisible(mode in ("mp4", "both"))
+        self.audio_settings_panel.setEnabled(base_enabled)
+        self.video_settings_panel.setEnabled(base_enabled)
         self.audio_format_label.setEnabled(audio_enabled)
         self.audio_format_combo.setEnabled(audio_enabled)
         self.mp3_quality_label.setEnabled(mp3_enabled)
@@ -1922,8 +2113,9 @@ class MainWindow(QMainWindow):
 
     def update_video_processing_controls(self, base_enabled: bool | None = None) -> None:
         if base_enabled is None:
-            base_enabled = self.mode_combo.isEnabled()
+            base_enabled = not self._running
         video_mode = self.mode_combo.currentData() in ("mp4", "both")
+        self.video_processing_panel.setVisible(video_mode)
         enabled = base_enabled and video_mode
         processing = self.video_processing_combo.currentData()
         needs_settings = enabled and processing != "keep"
@@ -1974,6 +2166,12 @@ class MainWindow(QMainWindow):
 
     def current_audio_format(self) -> str:
         return str(self.audio_format_combo.currentData() or "mp3")
+
+    def current_download_mode(self) -> str:
+        return str(self.mode_combo.currentData() or "mp3")
+
+    def current_download_mode_text(self) -> str:
+        return download_mode_text(self.current_download_mode(), self.language)
 
     def current_video_format(self) -> str:
         return str(self.video_format_combo.currentData() or "mp4")
@@ -2092,6 +2290,7 @@ class MainWindow(QMainWindow):
         self.duration_label.setText(f"{self.t('duration')}: {format_duration(info.duration, self.t('unknown'))}")
         self.mp3_path_label.setText(f"{info.audio_format.upper()}: {info.mp3_path}")
         self.mp4_path_label.setText(f"{info.video_format.upper()}: {info.mp4_path}")
+        self.update_preview_path_visibility()
 
         pixmap = QPixmap()
         if thumbnail and pixmap.loadFromData(thumbnail):
@@ -2117,6 +2316,7 @@ class MainWindow(QMainWindow):
         self.duration_label.setText(f"{self.t('duration')}: -")
         self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
         self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
+        self.update_preview_path_visibility()
 
     def show_batch_preview(self, count: int) -> None:
         self.thumbnail_label.clear()
@@ -2126,6 +2326,7 @@ class MainWindow(QMainWindow):
         self.duration_label.setText(f"{self.t('duration')}: -")
         self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
         self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
+        self.update_preview_path_visibility()
 
     def show_playlist_preview(self) -> None:
         self.thumbnail_label.clear()
@@ -2135,6 +2336,12 @@ class MainWindow(QMainWindow):
         self.duration_label.setText(f"{self.t('duration')}: -")
         self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
         self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
+        self.update_preview_path_visibility()
+
+    def update_preview_path_visibility(self) -> None:
+        mode = self.mode_combo.currentData()
+        self.mp3_path_label.setVisible(mode in ("mp3", "both"))
+        self.mp4_path_label.setVisible(mode in ("mp4", "both"))
 
     def paste_urls(self) -> None:
         text = QApplication.clipboard().text().strip()
@@ -2686,7 +2893,7 @@ class MainWindow(QMainWindow):
                 "video_id": extract_video_id(url),
                 "paths": paths,
                 "download_modes": modes_for_paths(paths),
-                "mode": self.mode_combo.currentText(),
+                "mode": self.current_download_mode_text(),
                 "audio_format": self.current_audio_format(),
                 "video_format": self.current_video_format(),
                 "mp3_quality": self.mp3_quality_combo.currentText(),
@@ -2748,7 +2955,8 @@ class MainWindow(QMainWindow):
         for item in load_history()[:50]:
             paths = item.get("paths") or []
             path = paths[0] if paths else ""
-            text = f"{item.get('time', '')} | {item.get('mode', '')} | {item.get('title', '')}"
+            mode_text = download_mode_text(item.get("mode", ""), self.language)
+            text = f"{item.get('time', '')} | {mode_text} | {item.get('title', '')}"
             row = QListWidgetItem(text)
             row.setData(Qt.ItemDataRole.UserRole, path)
             self.history_list.addItem(row)
@@ -2842,16 +3050,25 @@ class MainWindow(QMainWindow):
         self.progress_label.setText(self.t("progress_waiting"))
 
     def set_running(self, running: bool) -> None:
+        self._running = running
         self.start_button.setEnabled(not running)
         self.add_queue_button.setEnabled(not running)
         self.add_local_video_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
         self.url_input.setEnabled(not running)
+        self.paste_url_button.setEnabled(not running)
+        self.clear_url_button.setEnabled(not running)
+        self.output_input.setEnabled(not running)
         self.browse_button.setEnabled(not running)
+        self.mode_label.setEnabled(not running)
         self.mode_combo.setEnabled(not running)
+        self.basic_settings_widget.setEnabled(not running)
+        self.advanced_toggle_button.setEnabled(not running)
+        self.advanced_settings_widget.setEnabled(not running)
         self.folder_rule_combo.setEnabled(not running)
         self.filename_rule_combo.setEnabled(not running)
         self.language_combo.setEnabled(not running)
+        self.notify_checkbox.setEnabled(not running)
         self.skip_downloaded_checkbox.setEnabled(not running)
         self.resume_checkbox.setEnabled(not running)
         self.retry_combo.setEnabled(not running)
