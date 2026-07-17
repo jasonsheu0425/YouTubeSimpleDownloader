@@ -40,6 +40,13 @@ def _set_combo_data(combo, value: str) -> None:
     combo.setCurrentIndex(index)
 
 
+def _process_layout(qapp: QApplication, window: app_module.MainWindow) -> None:
+    window.show()
+    qapp.processEvents()
+    window.layout().activate()
+    qapp.processEvents()
+
+
 def test_download_type_labels_keep_internal_mode_values(qapp, isolated_settings) -> None:
     window = app_module.MainWindow()
     try:
@@ -191,6 +198,49 @@ def test_advanced_settings_default_collapsed_and_toggle_preserves_values(qapp, i
         window.advanced_toggle_button.setChecked(False)
         assert window.advanced_settings_widget.isHidden() is True
         assert window.folder_rule_combo.currentData() == "channel"
+    finally:
+        window.close()
+
+
+def test_advanced_settings_relayout_after_switching_from_video_to_audio(qapp, isolated_settings) -> None:
+    window = app_module.MainWindow()
+    try:
+        window.resize(1400, 880)
+        _set_combo_data(window.mode_combo, "mp4")
+        window.advanced_toggle_button.setChecked(True)
+        _process_layout(qapp, window)
+
+        advanced_layout = window.advanced_settings_widget.layout()
+        file_organization_panel = advanced_layout.itemAt(0).widget()
+        download_behavior_panel = advanced_layout.itemAt(1).widget()
+
+        assert window.video_processing_panel.isVisible() is True
+        _set_combo_data(window.mode_combo, "mp3")
+        _process_layout(qapp, window)
+
+        assert window.video_processing_panel.isHidden() is True
+        for panel in (file_organization_panel, download_behavior_panel):
+            assert panel.isVisible() is True
+            assert panel.height() >= panel.sizeHint().height()
+
+        expected_advanced_height = (
+            file_organization_panel.sizeHint().height()
+            + download_behavior_panel.sizeHint().height()
+            + advanced_layout.spacing()
+        )
+        assert window.advanced_settings_widget.height() >= expected_advanced_height
+        assert window.advanced_toggle_button.isEnabled() is True
+        assert window.start_button.isEnabled() is True
+
+        window.advanced_toggle_button.setChecked(False)
+        _process_layout(qapp, window)
+        assert window.advanced_settings_widget.isHidden() is True
+
+        window.advanced_toggle_button.setChecked(True)
+        _process_layout(qapp, window)
+        assert window.advanced_settings_widget.isVisible() is True
+        for panel in (file_organization_panel, download_behavior_panel):
+            assert panel.height() >= panel.sizeHint().height()
     finally:
         window.close()
 

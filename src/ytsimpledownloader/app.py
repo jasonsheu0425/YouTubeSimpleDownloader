@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -1732,6 +1733,7 @@ class MainWindow(QMainWindow):
         footer.addWidget(self.log_folder_button)
 
         layout = QVBoxLayout()
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
         layout.addWidget(self.input_group)
@@ -1744,7 +1746,8 @@ class MainWindow(QMainWindow):
 
         root = QWidget()
         root.setLayout(layout)
-        root.setMinimumHeight(layout.sizeHint().height())
+        self.content_root = root
+        self.content_layout = layout
         self.content_scroll = QScrollArea()
         self.content_scroll.setWidgetResizable(True)
         self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -2037,6 +2040,32 @@ class MainWindow(QMainWindow):
     def toggle_advanced_settings(self, expanded: bool) -> None:
         self.advanced_settings_widget.setVisible(expanded)
         self.update_advanced_toggle_text()
+        self.refresh_advanced_settings_geometry()
+
+    def refresh_advanced_settings_geometry(self) -> None:
+        layouts = (
+            self.basic_settings_widget.layout(),
+            self.advanced_settings_widget.layout(),
+            self.settings_group.layout(),
+            self.content_layout,
+        )
+        for layout in layouts:
+            layout.invalidate()
+
+        for widget in (
+            self.audio_settings_panel,
+            self.video_settings_panel,
+            self.video_processing_panel,
+            self.basic_settings_widget,
+            self.advanced_settings_widget,
+            self.settings_group,
+            self.content_root,
+        ):
+            widget.updateGeometry()
+
+        for layout in layouts:
+            layout.activate()
+        self.content_scroll.updateGeometry()
 
     def update_advanced_toggle_text(self) -> None:
         marker = "▼" if self.advanced_toggle_button.isChecked() else "▶"
@@ -2045,6 +2074,7 @@ class MainWindow(QMainWindow):
     def handle_mode_changed(self) -> None:
         self.update_quality_controls()
         self.update_video_processing_controls()
+        self.refresh_advanced_settings_geometry()
         self.update_preview_path_visibility()
         self.save_settings()
         self.schedule_preview()
