@@ -7,12 +7,13 @@ import re
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 
-from PySide6.QtCore import QSettings, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import QSettings, QThread, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -58,6 +59,12 @@ from .transcoder import (
     VideoTranscoder,
     encoder_available,
     friendly_transcode_error,
+)
+from .update_checker import (
+    GITHUB_LATEST_RELEASE_API_URL,
+    UpdateInfo,
+    parse_latest_release_response,
+    should_check_for_updates,
 )
 
 
@@ -152,6 +159,10 @@ TEXT = {
         "skip_downloaded_tooltip": "依下載歷史與目前輸出類型略過已完成項目；檔案同名碰撞會另行提示。",
         "retry_failed_tooltip": "使用目前設定重新嘗試失敗項目。",
         "notify": "下載完成時提示",
+        "check_updates_automatically": "自動檢查更新",
+        "update_available": "有新版本可用：目前版本 {current}，最新版本 {latest}。",
+        "open_release_page": "前往下載頁",
+        "dismiss_update": "關閉",
         "start": "開始",
         "cancel": "取消",
         "open_output": "開啟輸出資料夾",
@@ -319,6 +330,10 @@ TEXT = {
         "skip_downloaded_tooltip": "Uses download history and the current output type to skip completed items; filename collisions are handled separately.",
         "retry_failed_tooltip": "Retry failed items using the current settings.",
         "notify": "Notify when complete",
+        "check_updates_automatically": "Check for updates automatically",
+        "update_available": "A new version is available: current {current}, latest {latest}.",
+        "open_release_page": "Open Download Page",
+        "dismiss_update": "Dismiss",
         "start": "Start",
         "cancel": "Cancel",
         "open_output": "Open Output Folder",
@@ -1100,6 +1115,9 @@ class MainWindow(QMainWindow):
         self.worker: DownloadWorker | LocalTranscodeWorker | None = None
         self.preview_worker: PreviewWorker | None = None
         self.queue_worker: QueueBuildWorker | None = None
+        self.update_network_manager = QNetworkAccessManager(self)
+        self.update_reply: QNetworkReply | None = None
+        self.available_update: UpdateInfo | None = None
         self._running = False
         self.download_queue: list[QueueTask] = []
         self.current_info: VideoInfo | None = None
@@ -1319,6 +1337,11 @@ class MainWindow(QMainWindow):
 
         self.notify_checkbox = QCheckBox()
         self.notify_checkbox.setChecked(str(self.settings.value("notify_complete", "true")).lower() != "false")
+        self.update_check_checkbox = QCheckBox()
+        self.update_check_checkbox.setChecked(
+            str(self.settings.value("check_updates_automatically", "true")).lower() != "false"
+        )
+        self.update_check_checkbox.toggled.connect(self.handle_update_check_setting_changed)
         self.skip_downloaded_checkbox = QCheckBox()
         self.skip_downloaded_checkbox.setChecked(str(self.settings.value("skip_downloaded", "true")).lower() != "false")
         self.skip_downloaded_checkbox.stateChanged.connect(lambda _state: self.save_settings())
@@ -1721,6 +1744,22 @@ class MainWindow(QMainWindow):
         middle_layout.addWidget(self.preview_group, 2)
         middle_layout.addWidget(self.queue_group, 3)
 
+        self.update_banner = QFrame()
+        self.update_banner.setObjectName("updateBanner")
+        update_banner_layout = QHBoxLayout(self.update_banner)
+        update_banner_layout.setContentsMargins(12, 8, 8, 8)
+        update_banner_layout.setSpacing(10)
+        self.update_banner_label = QLabel()
+        self.update_banner_label.setWordWrap(True)
+        self.open_update_button = QPushButton()
+        self.open_update_button.clicked.connect(self.open_available_update)
+        self.dismiss_update_button = QPushButton()
+        self.dismiss_update_button.clicked.connect(self.update_banner.hide)
+        update_banner_layout.addWidget(self.update_banner_label, 1)
+        update_banner_layout.addWidget(self.open_update_button)
+        update_banner_layout.addWidget(self.dismiss_update_button)
+        self.update_banner.hide()
+
         footer = QHBoxLayout()
         footer.setSpacing(12)
         self.health_label = QLabel()
@@ -1729,6 +1768,7 @@ class MainWindow(QMainWindow):
         self.log_folder_button.clicked.connect(lambda: self.open_folder(PROJECT_DIR))
         footer.addWidget(self.health_label)
         footer.addStretch(1)
+        footer.addWidget(self.update_check_checkbox)
         footer.addWidget(self.version_footer_label)
         footer.addWidget(self.log_folder_button)
 
@@ -1742,6 +1782,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(middle_layout, 2)
         layout.addWidget(self.progress_group)
         layout.addWidget(self.results_group, 2)
+        layout.addWidget(self.update_banner)
         layout.addLayout(footer)
 
         root = QWidget()
@@ -1799,6 +1840,11 @@ class MainWindow(QMainWindow):
             QLabel#healthLabel {
                 color: #7ee787;
                 font-weight: 600;
+            }
+            QFrame#updateBanner {
+                background: #202b3d;
+                border: 1px solid #2f81f7;
+                border-radius: 6px;
             }
             QLineEdit, QTextEdit, QListWidget, QComboBox, QSpinBox {
                 background: #22272e;
@@ -1977,6 +2023,7 @@ class MainWindow(QMainWindow):
         self.retry_combo.setItemText(3, self.t("retry_thrice"))
         self.browse_button.setText(self.t("browse"))
         self.notify_checkbox.setText(self.t("notify"))
+        self.update_check_checkbox.setText(self.t("check_updates_automatically"))
         self.skip_downloaded_checkbox.setText(self.t("skip_downloaded"))
         self.skip_downloaded_checkbox.setToolTip(self.t("skip_downloaded_tooltip"))
         self.resume_checkbox.setText(self.t("resume_downloads"))
@@ -2019,6 +2066,9 @@ class MainWindow(QMainWindow):
             self.health_label.setText("● yt-dlp: OK    ● FFmpeg: OK    ● 輸出資料夾可寫入" if self.language == "zh" else "● yt-dlp: OK    ● FFmpeg: OK    ● Output folder writable")
             self.version_footer_label.setText(f"版本：{__version__}" if self.language == "zh" else f"Version: {__version__}")
             self.log_folder_button.setText("開啟 Log 資料夾" if self.language == "zh" else "Open Log Folder")
+            self.open_update_button.setText(self.t("open_release_page"))
+            self.dismiss_update_button.setText(self.t("dismiss_update"))
+            self.refresh_update_banner()
         if self.result_tabs:
             self.result_tabs.setTabText(0, self.t("results"))
             self.result_tabs.setTabText(1, self.t("history"))
@@ -2036,6 +2086,76 @@ class MainWindow(QMainWindow):
         self.language = self.language_combo.currentData()
         self.save_settings()
         self.update_language()
+
+    def handle_update_check_setting_changed(self, enabled: bool) -> None:
+        self.settings.setValue("check_updates_automatically", "true" if enabled else "false")
+        self.settings.sync()
+        if enabled:
+            return
+        self.update_banner.hide()
+        if self.update_reply is not None:
+            reply = self.update_reply
+            self.update_reply = None
+            reply.abort()
+            reply.deleteLater()
+
+    def maybe_check_for_updates(self) -> None:
+        if not self.update_check_checkbox.isChecked() or self.update_reply is not None:
+            return
+        last_check = self.settings.value("last_update_check_utc", "")
+        if not should_check_for_updates(last_check):
+            return
+
+        self.settings.setValue("last_update_check_utc", datetime.now(timezone.utc).isoformat())
+        self.settings.sync()
+        request = QNetworkRequest(QUrl(GITHUB_LATEST_RELEASE_API_URL))
+        request.setRawHeader(b"Accept", b"application/vnd.github+json")
+        request.setRawHeader(b"User-Agent", f"YouTubeSimpleDownloader/{__version__}".encode("ascii"))
+        request.setTransferTimeout(8000)
+        try:
+            reply = self._send_update_request(request)
+        except Exception:
+            return
+        self.update_reply = reply
+        reply.finished.connect(lambda: self._finish_update_check(reply))
+
+    def _send_update_request(self, request: QNetworkRequest) -> QNetworkReply:
+        return self.update_network_manager.get(request)
+
+    def _finish_update_check(self, reply: QNetworkReply) -> None:
+        if reply is not self.update_reply:
+            reply.deleteLater()
+            return
+        self.update_reply = None
+        try:
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                return
+            update = parse_latest_release_response(bytes(reply.readAll()), __version__)
+            if update is not None and self.update_check_checkbox.isChecked():
+                self.show_update_banner(update)
+        except Exception:
+            return
+        finally:
+            reply.deleteLater()
+
+    def show_update_banner(self, update: UpdateInfo) -> None:
+        self.available_update = update
+        self.refresh_update_banner()
+        self.update_banner.show()
+
+    def refresh_update_banner(self) -> None:
+        if self.available_update is None:
+            return
+        self.update_banner_label.setText(
+            self.t("update_available").format(
+                current=self.available_update.current_version,
+                latest=self.available_update.latest_version,
+            )
+        )
+
+    def open_available_update(self) -> None:
+        if self.available_update is not None:
+            QDesktopServices.openUrl(QUrl(self.available_update.release_url))
 
     def toggle_advanced_settings(self, expanded: bool) -> None:
         self.advanced_settings_widget.setVisible(expanded)
@@ -3133,6 +3253,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("custom_template", self.custom_template_input.text().strip())
         self.settings.setValue("language", self.language)
         self.settings.setValue("notify_complete", "true" if self.notify_checkbox.isChecked() else "false")
+        self.settings.setValue(
+            "check_updates_automatically",
+            "true" if self.update_check_checkbox.isChecked() else "false",
+        )
         self.settings.setValue("skip_downloaded", "true" if self.skip_downloaded_checkbox.isChecked() else "false")
         self.settings.setValue("resume_downloads", "true" if self.resume_checkbox.isChecked() else "false")
         self.settings.setValue("max_retries", self.current_max_retries())
@@ -3143,6 +3267,11 @@ class MainWindow(QMainWindow):
             self.cancel_download()
             event.ignore()
             return
+        if self.update_reply is not None:
+            reply = self.update_reply
+            self.update_reply = None
+            reply.abort()
+            reply.deleteLater()
         self.save_settings()
         super().closeEvent(event)
 
@@ -3153,6 +3282,7 @@ def main() -> int:
         app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     window = MainWindow()
     window.show()
+    QTimer.singleShot(1500, window.maybe_check_for_updates)
     return app.exec()
 
 
