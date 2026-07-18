@@ -1,3 +1,19 @@
+# YouTube Simple Downloader v0.9.7
+
+## v0.9.7 - Update Reminder
+
+- Added an asynchronous update check after startup that does not block the GUI.
+- Checks the latest stable GitHub Release while ignoring drafts and prereleases.
+- Displays a non-blocking banner when a newer stable version is available.
+- The banner shows the current and latest versions and provides a button to open the validated GitHub Release download page.
+- Added a close action for dismissing the update banner.
+- Added an automatic update-check checkbox to the footer.
+- Automatic checks run at most once every 24 hours.
+- Network errors, timeouts, HTTP failures, malformed JSON, invalid versions, and invalid release URLs fail silently without preventing application startup.
+- The reminder never downloads or installs updates automatically.
+- Tests use local data and do not contact GitHub.
+- The download core, history schema, FFmpeg resolver, and installer flow are unchanged.
+
 # YouTube Simple Downloader v0.9.6
 
 ## v0.9.6 - Workflow Settings Polish

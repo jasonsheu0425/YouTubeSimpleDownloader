@@ -11,9 +11,19 @@ from PySide6.QtNetwork import QNetworkReply
 from PySide6.QtWidgets import QApplication
 
 import ytsimpledownloader.app as app_module
+from ytsimpledownloader import __version__
 
 
-RELEASE_URL = "https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases/tag/v0.9.7"
+def next_patch_version(version: str) -> str:
+    major, minor, patch = (int(part) for part in version.split("."))
+    return f"{major}.{minor}.{patch + 1}"
+
+
+LATEST_VERSION = next_patch_version(__version__)
+RELEASE_URL = (
+    "https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases/tag/"
+    f"v{LATEST_VERSION}"
+)
 
 
 class FakeReply(QObject):
@@ -62,7 +72,7 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path) -> QSettings:
 def update_payload() -> bytes:
     return json.dumps(
         {
-            "tag_name": "v0.9.7",
+            "tag_name": f"v{LATEST_VERSION}",
             "html_url": RELEASE_URL,
             "draft": False,
             "prerelease": False,
@@ -147,8 +157,8 @@ def test_new_version_banner_actions_and_language(qapp, isolated_settings, monkey
         qapp.processEvents()
 
         assert window.update_banner.isHidden() is False
-        assert "0.9.6" in window.update_banner_label.text()
-        assert "0.9.7" in window.update_banner_label.text()
+        assert __version__ in window.update_banner_label.text()
+        assert LATEST_VERSION in window.update_banner_label.text()
         window.open_update_button.click()
         assert opened_urls == [RELEASE_URL]
 
