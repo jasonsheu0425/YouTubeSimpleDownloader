@@ -4,7 +4,7 @@ $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppName = "YouTubeSimpleDownloader"
 $DisplayName = "YouTube Simple Downloader"
 $Publisher = "Jason Test Signing"
-$Version = "0.9.5"
+$Version = "0.9.6"
 $Subject = "CN=Jason YouTube Simple Downloader Test Signing"
 $DistDir = Join-Path $ProjectDir "dist\$AppName"
 $AppExe = Join-Path $DistDir "$AppName.exe"

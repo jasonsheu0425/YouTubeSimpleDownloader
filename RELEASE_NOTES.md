@@ -1,3 +1,16 @@
+# YouTube Simple Downloader v0.9.6
+
+## v0.9.6 - Workflow Settings Polish
+
+- Renamed the visible download mode field to download type, with clearer audio-only, video-only, and audio-and-video choices.
+- Preserved the internal `mp3`, `mp4`, and `both` values so existing behavior and saved settings remain compatible.
+- Reorganized download settings into basic settings and an advanced section that is collapsed by default.
+- Audio and video controls now appear only when they apply to the selected download type.
+- Improved disabled control styling, tooltips, preview output paths, and setting locks while a job is running.
+- Fixed a blocking layout and hitbox regression that compressed advanced file-organization and download-behavior sections after switching from video to audio while expanded.
+- Preserved compatibility with saved MP3 / MP4 / MP3 + MP4 settings and older history display values.
+- The download core, history schema, and existing QSettings keys are unchanged.
+
 # YouTube Simple Downloader v0.9.5
 
 ## v0.9.5 - MP3 Cover Art Update
