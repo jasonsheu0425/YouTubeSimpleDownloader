@@ -5,7 +5,9 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from shutil import which
+
+
+PROBE_TIMEOUT_SECONDS = 15
 
 
 @dataclass(frozen=True)
@@ -48,20 +50,8 @@ class MediaInfo:
 
 
 def find_ffprobe(ffmpeg_path: str | Path | None = None) -> str:
-    candidates: list[Path] = []
-    if ffmpeg_path:
-        ffmpeg = Path(ffmpeg_path)
-        candidates.append(ffmpeg.with_name("ffprobe.exe"))
-        candidates.append(ffmpeg.with_name("ffprobe"))
-
-    for name in ("ffprobe.exe", "ffprobe"):
-        found = which(name)
-        if found:
-            candidates.append(Path(found))
-
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate)
+    # The verified bundle currently contains only FFmpeg. Never cross the
+    # trust boundary by executing an arbitrary ffprobe from PATH.
     return ""
 
 
@@ -78,7 +68,7 @@ def probe_media(path: str | Path, ffmpeg_path: str | Path | None = None) -> Medi
         except Exception as exc:
             ffprobe_error = str(exc)
     else:
-        ffprobe_error = "ffprobe not found"
+        ffprobe_error = "verified ffprobe is not available"
 
     if ffmpeg_path:
         try:
@@ -100,7 +90,15 @@ def _probe_with_ffprobe(source: Path, ffprobe: str, size: int) -> MediaInfo:
         "-show_streams",
         str(source),
     ]
-    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        timeout=PROBE_TIMEOUT_SECONDS,
+    )
     data = json.loads(completed.stdout or "{}")
     format_info = data.get("format") or {}
     streams = data.get("streams") or []
@@ -125,7 +123,17 @@ def _probe_with_ffprobe(source: Path, ffprobe: str, size: int) -> MediaInfo:
 
 def _probe_with_ffmpeg_i(source: Path, ffmpeg: str, size: int, prior_error: str) -> MediaInfo:
     command = [ffmpeg, "-hide_banner", "-i", str(source)]
-    completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Media probe timed out after {PROBE_TIMEOUT_SECONDS} seconds.") from exc
     text = (completed.stderr or "") + "\n" + (completed.stdout or "")
 
     duration = None

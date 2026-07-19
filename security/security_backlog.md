@@ -8,9 +8,23 @@ security issue and does not need to be withdrawn.
 
 | ID | Priority | Work item | Acceptance criteria | Status |
 | --- | --- | --- | --- | --- |
-| YTSD-SEC-001 | High | Restrict URL and thumbnail preview traffic | Only supported YouTube HTTPS hosts are accepted; redirects and thumbnail URLs are validated; private-network destinations and oversized/non-image responses are rejected; regression tests cover the rules | Planned |
-| YTSD-SEC-002 | High | Bring media probing inside the verified FFmpeg trust boundary | The app does not execute an unverified `ffprobe` from `PATH`; any selected probe meets the version/hash policy or verified FFmpeg fallback is used; all probe subprocesses have timeouts | Planned |
-| YTSD-SEC-004 | Normal | Contain custom filename templates | Absolute paths and traversal are rejected; resolved outputs remain under the selected output folder; valid templates continue working; overwrite/skip/number behavior remains unchanged | Planned |
+| YTSD-SEC-001 | High | Restrict URL and thumbnail preview traffic | Only supported YouTube HTTPS hosts are accepted; redirects and thumbnail URLs are validated; private-network destinations and oversized/non-image responses are rejected; regression tests cover the rules | Addressed in v0.9.8 candidate |
+| YTSD-SEC-002 | High | Bring media probing inside the verified FFmpeg trust boundary | The app does not execute an unverified `ffprobe` from `PATH`; any selected probe meets the version/hash policy or verified FFmpeg fallback is used; all probe subprocesses have timeouts | Addressed in v0.9.8 candidate |
+| YTSD-SEC-004 | Normal | Contain custom filename templates | Absolute paths and traversal are rejected; resolved outputs remain under the selected output folder; valid templates continue working; overwrite/skip/number behavior remains unchanged | Addressed in v0.9.8 candidate |
+
+### v0.9.8 Candidate Remediation Notes
+
+- YTSD-SEC-001: URL parsing now accepts only supported HTTPS YouTube video,
+  Shorts, and playlist forms. Thumbnail requests validate the initial URL,
+  every redirect, and the final URL; permit only approved image hosts and
+  content types; enforce a 15-second timeout and a 5 MiB read limit; and fail
+  thumbnail loading without failing the metadata preview.
+- YTSD-SEC-002: media probing no longer discovers or executes `ffprobe` from
+  `PATH`. Until a separately verified ffprobe artifact is bundled, probing
+  uses the already verified FFmpeg binary with a bounded timeout.
+- YTSD-SEC-004: custom templates reject absolute paths, drive/UNC prefixes,
+  and parent traversal. Prepared and reported output paths are resolved and
+  checked for containment before directory creation, overwrite, or use.
 
 ## Maintenance Backlog
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 from threading import Event
 from typing import Callable, Literal
@@ -12,6 +12,7 @@ from yt_dlp.utils import download_range_func
 
 from .ffmpeg_resolver import ensure_ffmpeg_exe
 from .media_probe import probe_media
+from .network_security import YOUTUBE_HOSTS, YOUTUBE_SHORT_HOSTS, validate_youtube_url
 from .transcoder import VideoTranscodeOptions, VideoTranscoder
 
 
@@ -86,10 +87,12 @@ PLAYLIST_ID_PREFIXES = ("PL", "UU", "OL", "FL")
 
 def extract_video_id(url: str) -> str:
     parsed = urlparse(url.strip())
-    host = parsed.netloc.lower()
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme.lower() != "https" or host not in YOUTUBE_HOSTS | YOUTUBE_SHORT_HOSTS:
+        return ""
     path_parts = [part for part in parsed.path.split("/") if part]
 
-    if "youtu.be" in host and path_parts:
+    if host in YOUTUBE_SHORT_HOSTS and path_parts:
         return path_parts[0]
 
     query = parse_qs(parsed.query)
@@ -105,8 +108,8 @@ def extract_video_id(url: str) -> str:
 
 def is_playlist_url(url: str) -> bool:
     parsed = urlparse(url.strip())
-    host = parsed.netloc.lower()
-    if "youtube.com" not in host and "youtu.be" not in host:
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme.lower() != "https" or host not in YOUTUBE_HOSTS:
         return False
 
     query = parse_qs(parsed.query)
@@ -159,9 +162,7 @@ class SingleVideoDownloader:
         playlist_title: str = "",
         playlist_index: int | None = None,
     ) -> VideoInfo:
-        clean_url = url.strip()
-        if not clean_url:
-            raise ValueError("URL is required.")
+        clean_url = validate_youtube_url(url)
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         with YoutubeDL(self._base_opts()) as ydl:
@@ -180,9 +181,7 @@ class SingleVideoDownloader:
         )
 
     def fetch_playlist_info(self, url: str) -> PlaylistInfo:
-        clean_url = url.strip()
-        if not clean_url:
-            raise ValueError("URL is required.")
+        clean_url = validate_youtube_url(url)
 
         opts = self._base_opts()
         opts["noplaylist"] = False
@@ -220,9 +219,7 @@ class SingleVideoDownloader:
         playlist_title: str = "",
         playlist_index: int | None = None,
     ) -> list[DownloadResult]:
-        clean_url = url.strip()
-        if not clean_url:
-            raise ValueError("URL is required.")
+        clean_url = validate_youtube_url(url)
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -318,7 +315,9 @@ class SingleVideoDownloader:
         prepared_info = self._info_with_context(info, playlist_title, playlist_index)
         outtmpl = self._output_template(suffix, playlist_title, playlist_index)
         with YoutubeDL({"outtmpl": outtmpl, "windowsfilenames": True, "restrictfilenames": False}) as ydl:
-            return Path(ydl.prepare_filename(prepared_info)).with_suffix(suffix)
+            path = Path(ydl.prepare_filename(prepared_info)).with_suffix(suffix)
+        self._require_contained_output_path(path)
+        return path
 
     def expected_video_output_path(
         self,
@@ -333,9 +332,11 @@ class SingleVideoDownloader:
         target = source_path.with_name(f"{source_path.stem}{options.suffix}{options.output_suffix()}")
         if target.resolve() == source_path.resolve():
             target = source_path.with_name(f"{source_path.stem}_converted{options.output_suffix()}")
+        self._require_contained_output_path(target)
         return target
 
     def _extract_metadata(self, url: str) -> dict:
+        url = validate_youtube_url(url)
         with YoutubeDL(self._base_opts()) as ydl:
             return ydl.extract_info(url, download=False)
 
@@ -347,6 +348,7 @@ class SingleVideoDownloader:
         playlist_index: int | None = None,
     ) -> tuple[Path, bool]:
         target_path = self.expected_output_path(info, suffix, playlist_title, playlist_index)
+        self._require_contained_output_path(target_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if not target_path.exists():
             return target_path, False
@@ -368,6 +370,8 @@ class SingleVideoDownloader:
             counter += 1
 
     def _run_yt_dlp(self, url: str, mode_options: dict, target_path: Path) -> dict:
+        url = validate_youtube_url(url)
+        self._require_contained_output_path(target_path)
         opts = self._base_opts()
         opts["outtmpl"] = str(target_path.with_suffix(".%(ext)s"))
         opts["progress_hooks"] = [self._progress_hook]
@@ -514,15 +518,20 @@ class SingleVideoDownloader:
         for item in requested_downloads:
             filepath = item.get("filepath") or item.get("_filename")
             if filepath and Path(filepath).suffix.lower() == suffix:
-                return Path(filepath)
+                path = Path(filepath)
+                self._require_contained_output_path(path)
+                return path
 
         if target_path.exists():
+            self._require_contained_output_path(target_path)
             return target_path
 
         matches = sorted(target_path.parent.glob(f"*{suffix}"), key=lambda item: item.stat().st_mtime, reverse=True)
         if matches:
+            self._require_contained_output_path(matches[0])
             return matches[0]
 
+        self._require_contained_output_path(target_path)
         return target_path
 
     def _info_with_context(self, info: dict, playlist_title: str, playlist_index: int | None) -> dict:
@@ -568,10 +577,32 @@ class SingleVideoDownloader:
         if rule == "custom":
             template = self.output_options.custom_template.strip()
             if template:
+                self._validate_custom_filename_template(template)
                 if "%(ext)" not in template:
                     template += ".%(ext)s"
                 return template
         return "%(title).200B [%(id)s].%(ext)s"
+
+    @staticmethod
+    def _validate_custom_filename_template(template: str) -> None:
+        windows_path = PureWindowsPath(template)
+        posix_path = PurePosixPath(template)
+        parts = [part for part in template.replace("\\", "/").split("/") if part]
+        if (
+            windows_path.is_absolute()
+            or bool(windows_path.drive)
+            or posix_path.is_absolute()
+            or ".." in parts
+        ):
+            raise ValueError("Custom filename template must stay inside the output folder.")
+
+    def _require_contained_output_path(self, path: Path) -> None:
+        output_root = self.output_dir.resolve()
+        candidate = Path(path).resolve()
+        try:
+            candidate.relative_to(output_root)
+        except ValueError as exc:
+            raise ValueError("Output path must stay inside the selected output folder.") from exc
 
     def _audio_suffix(self) -> str:
         return f".{self.audio_format}"

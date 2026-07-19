@@ -6,7 +6,6 @@ import os
 import re
 import subprocess
 import sys
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
@@ -53,6 +52,7 @@ from .downloader import (
 )
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 from .media_probe import probe_media
+from .network_security import fetch_thumbnail_bytes, validate_youtube_url
 from .transcoder import (
     TranscodeCancelled,
     VideoTranscodeOptions,
@@ -499,8 +499,10 @@ class PreviewWorker(QThread):
             info = downloader.fetch_video_info(self.url)
             thumbnail = b""
             if info.thumbnail_url:
-                with urllib.request.urlopen(info.thumbnail_url, timeout=15) as response:
-                    thumbnail = response.read()
+                try:
+                    thumbnail = fetch_thumbnail_bytes(info.thumbnail_url)
+                except Exception:
+                    thumbnail = b""
         except Exception as exc:
             self.failed.emit(str(exc))
         else:
@@ -521,6 +523,11 @@ class QueueBuildWorker(QThread):
         tasks = []
         errors = []
         for url in self.urls:
+            try:
+                url = validate_youtube_url(url)
+            except ValueError as exc:
+                errors.append(f"{url}: {exc}")
+                continue
             if is_playlist_url(url):
                 self.status.emit(f"Reading playlist: {url}")
                 try:
