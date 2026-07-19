@@ -7,7 +7,7 @@ A Windows desktop application for saving public YouTube videos and playlists as 
 Download the installer from the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). The normal installer is:
 
 ```text
-YouTubeSimpleDownloader_Setup_v0.9.7-inno-self-signed.exe
+YouTubeSimpleDownloader_Setup_v0.9.8-inno-self-signed.exe
 ```
 
 The installer defaults to the per-user location below and shows the destination page on every run. It does not reuse an older install folder automatically.
@@ -42,7 +42,9 @@ The osu! preset outputs an MP4 with H.264, `yuv420p`, a maximum height of 720p w
 
 ## FFmpeg security
 
-Version 0.9.7 continues to bundle FFmpeg 8.1.2. This replaces the previous FFmpeg 7.1 binary and addresses the known CVE-2026-8461 exposure in the MagicYUV decoder. Development runs, packaged builds, installed copies, and the AppData runtime copy resolve to the verified bundled binary. The `imageio-ffmpeg` Python dependency remains for compatibility, but its older bundled executable is neither preferred nor included in packaged output.
+Version 0.9.8 continues to bundle FFmpeg 8.1.2. This replaces the previous FFmpeg 7.1 binary and addresses the known CVE-2026-8461 exposure in the MagicYUV decoder. Development runs, packaged builds, installed copies, and the AppData runtime copy resolve to the verified bundled binary. The `imageio-ffmpeg` Python dependency remains for compatibility, but its older bundled executable is neither preferred nor included in packaged output.
+
+Version 0.9.8 also hardens preview networking, media probing, and custom output paths. Preview and batch inputs accept only supported HTTPS YouTube URLs, thumbnail requests are bounded and restricted to trusted image hosts, arbitrary `ffprobe` executables from `PATH` are no longer used, and custom filename templates cannot escape the selected output folder.
 
 The Windows essentials build was downloaded from the provider linked by FFmpeg's official Windows download page:
 
@@ -69,7 +71,7 @@ The release installer is self-signed for testing and friend-to-friend sharing. W
 Verify an installer after downloading it:
 
 ```powershell
-Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.9.7-inno-self-signed.exe -Algorithm SHA256
+Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.9.8-inno-self-signed.exe -Algorithm SHA256
 ```
 
 Compare the reported hash with the value in the matching GitHub Release.
@@ -166,7 +168,7 @@ Build the self-signed Inno Setup installer after the EXE bundle is ready:
 Expected installer:
 
 ```text
-release\YouTubeSimpleDownloader_Setup_v0.9.7-inno-self-signed.exe
+release\YouTubeSimpleDownloader_Setup_v0.9.8-inno-self-signed.exe
 ```
 
 ## Contributing and security

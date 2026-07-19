@@ -1,3 +1,21 @@
+# YouTube Simple Downloader v0.9.8
+
+## v0.9.8 - Security Hardening
+
+- Hardened URL validation for preview and batch input.
+- Only supported HTTPS YouTube hosts and video, Shorts, and playlist URL forms are accepted.
+- Rejected HTTP, non-YouTube domains, embedded credentials, localhost, private IPs, malformed URLs, and unsupported schemes.
+- Hardened thumbnail loading with trusted hosts, redirect and final-URL validation, image content-type checks, a timeout, and a 5 MiB size limit.
+- Thumbnail failures no longer break metadata preview.
+- Stopped using arbitrary `ffprobe` executables discovered through `PATH`.
+- Media probing now uses the verified FFmpeg fallback when no separately verified ffprobe artifact is available.
+- Added a 15-second timeout to media probe subprocesses.
+- Contained custom filename templates under the selected output folder.
+- Rejected parent traversal, Windows absolute and drive-relative paths, UNC paths, and POSIX absolute paths.
+- Updated the security backlog to mark YTSD-SEC-001, YTSD-SEC-002, and YTSD-SEC-004 as addressed in the v0.9.8 candidate.
+- The download core behavior and history schema are unchanged.
+- Dependency locking, SBOM generation, immutable Actions, and the Node.js 20 warning remain maintenance backlog items.
+
 # YouTube Simple Downloader v0.9.7
 
 ## v0.9.7 - Update Reminder
