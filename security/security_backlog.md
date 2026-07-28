@@ -1,18 +1,19 @@
 # Security Backlog
 
-This backlog records follow-up work from the v0.9.7 read-only security audit.
-It does not change the v0.9.7 release decision: the release has no blocking
-security issue and does not need to be withdrawn.
+This backlog originated from the v0.9.7 read-only security audit and was
+updated after the v0.9.8 security hardening release. The addressed items below
+record shipped mitigations; the remaining maintenance items do not imply that
+the project is risk-free.
 
 ## v0.9.8 Security Hardening
 
 | ID | Priority | Work item | Acceptance criteria | Status |
 | --- | --- | --- | --- | --- |
-| YTSD-SEC-001 | High | Restrict URL and thumbnail preview traffic | Only supported YouTube HTTPS hosts are accepted; redirects and thumbnail URLs are validated; private-network destinations and oversized/non-image responses are rejected; regression tests cover the rules | Addressed in v0.9.8 candidate |
-| YTSD-SEC-002 | High | Bring media probing inside the verified FFmpeg trust boundary | The app does not execute an unverified `ffprobe` from `PATH`; any selected probe meets the version/hash policy or verified FFmpeg fallback is used; all probe subprocesses have timeouts | Addressed in v0.9.8 candidate |
-| YTSD-SEC-004 | Normal | Contain custom filename templates | Absolute paths and traversal are rejected; resolved outputs remain under the selected output folder; valid templates continue working; overwrite/skip/number behavior remains unchanged | Addressed in v0.9.8 candidate |
+| YTSD-SEC-001 | High | Restrict URL and thumbnail preview traffic | Only supported YouTube HTTPS hosts are accepted; redirects and thumbnail URLs are validated; private-network destinations and oversized/non-image responses are rejected; regression tests cover the rules | Addressed in v0.9.8 |
+| YTSD-SEC-002 | High | Bring media probing inside the verified FFmpeg trust boundary | The app does not execute an unverified `ffprobe` from `PATH`; any selected probe meets the version/hash policy or verified FFmpeg fallback is used; all probe subprocesses have timeouts | Addressed in v0.9.8 |
+| YTSD-SEC-004 | Normal | Contain custom filename templates | Absolute paths and traversal are rejected; resolved outputs remain under the selected output folder; valid templates continue working; overwrite/skip/number behavior remains unchanged | Addressed in v0.9.8 |
 
-### v0.9.8 Candidate Remediation Notes
+### v0.9.8 Remediation Notes
 
 - YTSD-SEC-001: URL parsing now accepts only supported HTTPS YouTube video,
   Shorts, and playlist forms. Thumbnail requests validate the initial URL,
@@ -35,13 +36,16 @@ security issue and does not need to be withdrawn.
 | YTSD-MAINT-002 | Normal | Generate an SBOM | Each release can produce an SBOM covering bundled Python, Qt, yt-dlp, and FFmpeg components | Backlog |
 | YTSD-MAINT-003 | Normal | Record build provenance | Release records identify source commit, build constraints, FFmpeg policy, artifact hash, and signing method | Backlog |
 | YTSD-MAINT-004 | Low | Refresh development tooling advisories | pytest and setuptools constraints are reviewed and updated where compatible; Windows tests remain green | Backlog |
-| YTSD-MAINT-005 | Low | Document history privacy | Support/security guidance warns that `history.json` contains URLs and full local paths and should be reviewed before sharing | Backlog |
+| YTSD-MAINT-005 | Low | Document history privacy | Support/security guidance warns that `history.json` contains URLs and full local paths and should be reviewed before sharing | Addressed in v0.9.8 post-release documentation |
 
 ## Scheduling Notes
 
-- YTSD-SEC-001 and YTSD-SEC-002 should be addressed first in v0.9.8.
-- YTSD-SEC-004 should ship in the same hardening release if its compatibility
-  tests pass without changing existing filename behavior.
+- YTSD-SEC-001, YTSD-SEC-002, and YTSD-SEC-004 shipped in v0.9.8 with
+  regression coverage.
+- YTSD-MAINT-005 was completed as post-release documentation and did not
+  require a history schema or application behavior change.
 - Dependency locks, SBOM generation, provenance, and immutable Actions are
-  maintenance work. They should not delay an urgent runtime security fix.
-- No item in this backlog retroactively blocks or withdraws v0.9.7.
+  remaining maintenance work. They do not retroactively block the verified
+  v0.9.8 release.
+- No post-release blocker is currently recorded here. Future findings should
+  still be evaluated on their own evidence and severity.

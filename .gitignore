@@ -4,6 +4,7 @@ dist/
 downloads/
 ffmpeg/
 release/
+!docs/release/
 installer/payload/
 installer/*.7z
 installer/sfx-config.txt

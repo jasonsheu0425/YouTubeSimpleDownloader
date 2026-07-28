@@ -12,7 +12,7 @@
 - Added a 15-second timeout to media probe subprocesses.
 - Contained custom filename templates under the selected output folder.
 - Rejected parent traversal, Windows absolute and drive-relative paths, UNC paths, and POSIX absolute paths.
-- Updated the security backlog to mark YTSD-SEC-001, YTSD-SEC-002, and YTSD-SEC-004 as addressed in the v0.9.8 candidate.
+- Updated the security backlog to mark YTSD-SEC-001, YTSD-SEC-002, and YTSD-SEC-004 as addressed in v0.9.8.
 - The download core behavior and history schema are unchanged.
 - Dependency locking, SBOM generation, immutable Actions, and the Node.js 20 warning remain maintenance backlog items.
 

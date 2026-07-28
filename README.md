@@ -66,7 +66,7 @@ The application deliberately does not support:
 
 ## Windows warning and self-signed installer
 
-The release installer is self-signed for testing and friend-to-friend sharing. Windows SmartScreen may show a warning because the project does not use a paid trusted code-signing certificate. The GitHub Release includes a SHA-256 value and the exported public test certificate for verification.
+The release installer is self-signed for testing and friend-to-friend sharing. Windows SmartScreen may show a warning because the project does not use a paid trusted code-signing certificate. The matching GitHub Release publishes the installer SHA-256 digest for verification; it does not currently publish a separate certificate file.
 
 Verify an installer after downloading it:
 
@@ -85,6 +85,8 @@ Compare the reported hash with the value in the matching GitHub Release.
 5. Open the file, copy its path, or reveal it in Explorer from the result list.
 
 For a playlist that changes over time, leave **Skip previously downloaded videos** enabled. Later runs check the recorded output formats and download only missing videos or formats.
+
+Download history is stored locally and may contain YouTube URLs, video titles, and full local output paths. Review and redact `history.json` before sharing it in a support request. See [SECURITY.md](SECURITY.md) for details.
 
 ## Developer setup
 
