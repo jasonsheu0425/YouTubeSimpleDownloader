@@ -13,6 +13,7 @@ from yt_dlp.utils import download_range_func
 from .ffmpeg_resolver import ensure_ffmpeg_exe
 from .media_probe import probe_media
 from .network_security import YOUTUBE_HOSTS, YOUTUBE_SHORT_HOSTS, validate_youtube_url
+from .time_range import TimeRange
 from .transcoder import VideoTranscodeOptions, VideoTranscoder
 
 
@@ -140,11 +141,15 @@ class SingleVideoDownloader:
         video_processing_options: VideoTranscodeOptions | None = None,
         output_options: OutputOptions | None = None,
         resume_downloads: bool = True,
+        time_range: TimeRange | None = None,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.progress_callback = progress_callback or (lambda _message: None)
         self.cancel_event = cancel_event
+        if test_seconds is not None and time_range is not None:
+            raise ValueError("test_seconds and time_range cannot be used together.")
         self.test_seconds = test_seconds
+        self.time_range = TimeRange(0, test_seconds) if test_seconds is not None else time_range
         self.file_exists_action = file_exists_action
         self.mp3_quality = mp3_quality
         self.mp4_quality = mp4_quality
@@ -316,6 +321,8 @@ class SingleVideoDownloader:
         outtmpl = self._output_template(suffix, playlist_title, playlist_index)
         with YoutubeDL({"outtmpl": outtmpl, "windowsfilenames": True, "restrictfilenames": False}) as ydl:
             path = Path(ydl.prepare_filename(prepared_info)).with_suffix(suffix)
+        if self.time_range is not None:
+            path = path.with_name(f"{path.stem}{self.time_range.filename_suffix()}{path.suffix}")
         self._require_contained_output_path(path)
         return path
 
@@ -375,6 +382,7 @@ class SingleVideoDownloader:
         opts = self._base_opts()
         opts["outtmpl"] = str(target_path.with_suffix(".%(ext)s"))
         opts["progress_hooks"] = [self._progress_hook]
+        opts.update(self._download_range_options())
         opts.update(mode_options)
 
         with YoutubeDL(opts) as ydl:
@@ -398,10 +406,18 @@ class SingleVideoDownloader:
         if node_path:
             opts["js_runtimes"] = {"node": {"path": node_path}}
             opts["remote_components"] = ["ejs:github"]
-        if self.test_seconds:
-            opts["download_ranges"] = download_range_func(None, [(0, self.test_seconds)])
-            opts["force_keyframes_at_cuts"] = True
         return opts
+
+    def _download_range_options(self) -> dict:
+        if self.time_range is None:
+            return {}
+        return {
+            "download_ranges": download_range_func(
+                None,
+                [(self.time_range.start_seconds, self.time_range.end_seconds)],
+            ),
+            "force_keyframes_at_cuts": True,
+        }
 
     def _audio_options(self) -> dict:
         postprocessor = {
