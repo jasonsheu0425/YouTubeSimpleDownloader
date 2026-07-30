@@ -53,6 +53,7 @@ from .downloader import (
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 from .media_probe import probe_media
 from .network_security import fetch_thumbnail_bytes, validate_youtube_url
+from .time_range import TimeRange, TimeRangeError
 from .transcoder import (
     TranscodeCancelled,
     VideoTranscodeOptions,
@@ -69,6 +70,7 @@ from .update_checker import (
 
 
 HISTORY_PATH = PROJECT_DIR / "history.json"
+HISTORY_SCHEMA_VERSION = 3
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "app_icon.ico"
 SUPPORTED_LOCAL_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
 
@@ -595,6 +597,7 @@ class DownloadWorker(QThread):
         skip_downloaded_template: str,
         playlist_skip_summary_template: str,
         retry_attempt_template: str,
+        time_range: TimeRange | None = None,
     ) -> None:
         super().__init__()
         self.tasks = [copy_queue_task(task) for task in tasks]
@@ -618,6 +621,7 @@ class DownloadWorker(QThread):
         self.skip_downloaded_template = skip_downloaded_template
         self.playlist_skip_summary_template = playlist_skip_summary_template
         self.retry_attempt_template = retry_attempt_template
+        self.time_range = time_range
         self.cancel_event = Event()
 
     def cancel(self) -> None:
@@ -638,6 +642,7 @@ class DownloadWorker(QThread):
                 video_processing_options=self.video_processing_options,
                 output_options=self.output_options,
                 resume_downloads=self.resume_downloads,
+                time_range=self.time_range,
             )
             entries = []
             task_items = []
@@ -716,6 +721,7 @@ class DownloadWorker(QThread):
                                 requested_mode,
                                 self.audio_format,
                                 self.video_format,
+                                self.time_range,
                             ))
                             if existing_path and Path(existing_path).exists():
                                 existing_results.append((requested_mode, existing_path, True))
@@ -743,6 +749,7 @@ class DownloadWorker(QThread):
                                     "error": "",
                                     "results": existing_results,
                                     "skipped_by_history": True,
+                                    "time_range": self.time_range,
                                 }
                             )
                             break
@@ -765,6 +772,7 @@ class DownloadWorker(QThread):
                                         result.mode,
                                         self.audio_format,
                                         self.video_format,
+                                        self.time_range,
                                     )
                                     self.downloaded_by_video_id.setdefault(video_id, {})[output_key] = str(result.path)
                                     self.downloaded_by_video_id[video_id]["_title"] = info.title
@@ -822,6 +830,7 @@ class DownloadWorker(QThread):
                                 "info": info,
                                 "error": "",
                                 "results": result_items,
+                                "time_range": self.time_range,
                             }
                         )
                         self.task_updated.emit(queue_index, "completed", info.title, "", task.attempts, "")
@@ -1011,12 +1020,21 @@ def download_mode_for_missing_modes(missing_modes: list[str]) -> str:
     return ""
 
 
-def download_key_for_mode(mode: str, audio_format: str, video_format: str) -> str:
+def download_key_for_mode(
+    mode: str,
+    audio_format: str,
+    video_format: str,
+    time_range: TimeRange | None = None,
+) -> str:
     if mode == "mp3":
-        return f"audio:{audio_format}"
-    if mode == "mp4":
-        return f"video:{video_format}"
-    return mode
+        key = f"audio:{audio_format}"
+    elif mode == "mp4":
+        key = f"video:{video_format}"
+    else:
+        key = mode
+    if time_range is not None:
+        key = f"{key}:{time_range.identity_key()}"
+    return key
 
 
 def display_label_for_result(mode: str, path: str) -> str:
@@ -1055,6 +1073,29 @@ def save_history(items: list[dict]) -> None:
     HISTORY_PATH.write_text(json.dumps(items[:100], ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def history_time_range(item: dict) -> TimeRange | None:
+    if item.get("trimmed") is not True:
+        return None
+    try:
+        return TimeRange(
+            start_seconds=item["trim_start_seconds"],
+            end_seconds=item["trim_end_seconds"],
+        )
+    except (KeyError, TimeRangeError):
+        return None
+
+
+def build_history_record(fields: dict, time_range: TimeRange | None = None) -> dict:
+    return {
+        **fields,
+        "schema_version": HISTORY_SCHEMA_VERSION,
+        "trimmed": time_range is not None,
+        "trim_start_seconds": time_range.start_seconds if time_range is not None else None,
+        "trim_end_seconds": time_range.end_seconds if time_range is not None else None,
+        "trim_duration_seconds": time_range.duration_seconds if time_range is not None else None,
+    }
+
+
 def history_downloads_by_video_id() -> dict[str, dict[str, str]]:
     downloads: dict[str, dict[str, str]] = {}
     for item in load_history():
@@ -1069,6 +1110,9 @@ def history_downloads_by_video_id() -> dict[str, dict[str, str]]:
 
         item_audio_format = str(item.get("audio_format") or "").lower()
         item_video_format = str(item.get("video_format") or "").lower()
+        item_time_range = history_time_range(item)
+        if item.get("trimmed") is True and item_time_range is None:
+            continue
 
         for raw_path in item.get("paths") or []:
             path = Path(str(raw_path))
@@ -1077,10 +1121,10 @@ def history_downloads_by_video_id() -> dict[str, dict[str, str]]:
             suffix = path.suffix.lower().lstrip(".")
             if suffix in AUDIO_FORMATS:
                 audio_format = item_audio_format if item_audio_format in AUDIO_FORMATS else suffix
-                bucket[f"audio:{audio_format}"] = str(path)
+                bucket[download_key_for_mode("mp3", audio_format, item_video_format, item_time_range)] = str(path)
             elif suffix in VIDEO_FORMATS:
                 video_format = item_video_format if item_video_format in VIDEO_FORMATS else suffix
-                bucket[f"video:{video_format}"] = str(path)
+                bucket[download_key_for_mode("mp4", item_audio_format, video_format, item_time_range)] = str(path)
     return downloads
 
 
@@ -1095,16 +1139,17 @@ def task_has_downloaded_modes(
     downloaded_by_video_id: dict[str, dict[str, str]],
     audio_format: str,
     video_format: str,
+    time_range: TimeRange | None = None,
 ) -> bool:
     video_id = extract_video_id(task.url)
     if not video_id:
         return False
     existing = downloaded_by_video_id.get(video_id, {})
-    return all(
-        bool(existing.get(download_key_for_mode(requested_mode, audio_format, video_format)))
-        and Path(existing[download_key_for_mode(requested_mode, audio_format, video_format)]).exists()
-        for requested_mode in modes_for_download(mode)
-    )
+    for requested_mode in modes_for_download(mode):
+        key = download_key_for_mode(requested_mode, audio_format, video_format, time_range)
+        if not existing.get(key) or not Path(existing[key]).exists():
+            return False
+    return True
 
 
 class MainWindow(QMainWindow):
@@ -3039,11 +3084,11 @@ class MainWindow(QMainWindow):
 
     def add_history(self, info: VideoInfo, url: str, paths: list[str], entry: dict | None = None) -> None:
         video_options = self.current_video_transcode_options()
+        time_range = entry.get("time_range") if entry and isinstance(entry.get("time_range"), TimeRange) else None
         items = load_history()
         items.insert(
             0,
-            {
-                "schema_version": 2,
+            build_history_record({
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "title": info.title,
                 "url": url,
@@ -3066,7 +3111,7 @@ class MainWindow(QMainWindow):
                 "remove_audio": video_options.audio == "remove",
                 "osu_compatible": video_options.mode == "osu",
                 "media_info": entry.get("media_info").summary() if entry and entry.get("media_info") else "",
-            },
+            }, time_range),
         )
         save_history(items)
         self.refresh_history()
@@ -3076,8 +3121,7 @@ class MainWindow(QMainWindow):
         items = load_history()
         items.insert(
             0,
-            {
-                "schema_version": 2,
+            build_history_record({
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "title": entry.get("title") or Path(str(entry.get("source_path") or "")).stem,
                 "url": "",
@@ -3100,7 +3144,7 @@ class MainWindow(QMainWindow):
                 if entry.get("source_media_info")
                 else "",
                 "media_info": entry.get("media_info").summary() if entry.get("media_info") else "",
-            },
+            }),
         )
         save_history(items)
         self.refresh_history()
