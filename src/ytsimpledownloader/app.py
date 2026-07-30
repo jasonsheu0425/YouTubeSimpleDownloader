@@ -53,7 +53,13 @@ from .downloader import (
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 from .media_probe import probe_media
 from .network_security import fetch_thumbnail_bytes, validate_youtube_url
-from .time_range import TimeRange, TimeRangeError
+from .time_range import (
+    TimeRange,
+    TimeRangeError,
+    format_time_value,
+    parse_time_range,
+    validate_against_duration,
+)
 from .transcoder import (
     TranscodeCancelled,
     VideoTranscodeOptions,
@@ -154,6 +160,15 @@ TEXT = {
         "filename_custom": "自訂",
         "basic_settings": "基本設定",
         "advanced_settings": "進階設定",
+        "trim_section": "時間範圍（可選）",
+        "trim_enabled": "只下載指定片段",
+        "trim_start": "開始",
+        "trim_end": "結束",
+        "trim_duration": "片段長度",
+        "trim_single_video_only": "時間範圍下載目前僅支援單一影片",
+        "trim_error_end_required": "請輸入有效的結束時間",
+        "trim_error_end_after_start": "結束時間必須大於開始時間",
+        "trim_error_end_after_duration": "結束時間不可超過影片長度",
         "file_organization": "檔案整理",
         "download_behavior": "下載行為",
         "video_processing_section": "影片處理",
@@ -325,6 +340,15 @@ TEXT = {
         "filename_custom": "Custom",
         "basic_settings": "Basic Settings",
         "advanced_settings": "Advanced Settings",
+        "trim_section": "Time Range (Optional)",
+        "trim_enabled": "Download only the selected segment",
+        "trim_start": "Start",
+        "trim_end": "End",
+        "trim_duration": "Segment duration",
+        "trim_single_video_only": "Time range downloads currently support a single video only",
+        "trim_error_end_required": "Please enter a valid end time",
+        "trim_error_end_after_start": "End time must be greater than start time",
+        "trim_error_end_after_duration": "End time cannot exceed the video duration",
         "file_organization": "File Organization",
         "download_behavior": "Download Behavior",
         "video_processing_section": "Video Processing",
@@ -480,6 +504,7 @@ class PreviewWorker(QThread):
         audio_format: str,
         video_format: str,
         video_processing_options: VideoTranscodeOptions,
+        time_range: TimeRange | None = None,
     ) -> None:
         super().__init__()
         self.url = url
@@ -488,6 +513,7 @@ class PreviewWorker(QThread):
         self.audio_format = audio_format
         self.video_format = video_format
         self.video_processing_options = video_processing_options
+        self.time_range = time_range
 
     def run(self) -> None:
         try:
@@ -497,6 +523,7 @@ class PreviewWorker(QThread):
                 audio_format=self.audio_format,
                 video_format=self.video_format,
                 video_processing_options=self.video_processing_options,
+                time_range=self.time_range,
             )
             info = downloader.fetch_video_info(self.url)
             thumbnail = b""
@@ -1204,11 +1231,13 @@ class MainWindow(QMainWindow):
         self.history_header = QLabel()
         self.status_header = QLabel()
         self.basic_settings_title_label = QLabel()
+        self.trim_section_title_label = QLabel()
         self.file_organization_title_label = QLabel()
         self.download_behavior_title_label = QLabel()
         self.video_processing_title_label = QLabel()
         for label in (
             self.basic_settings_title_label,
+            self.trim_section_title_label,
             self.file_organization_title_label,
             self.download_behavior_title_label,
             self.video_processing_title_label,
@@ -1412,6 +1441,36 @@ class MainWindow(QMainWindow):
             self.retry_combo.setCurrentIndex(retry_index)
         self.retry_combo.currentIndexChanged.connect(lambda _index: self.save_settings())
 
+        self.trim_enabled_checkbox = QCheckBox()
+        self.trim_start_label = QLabel()
+        self.trim_start_input = QLineEdit()
+        self.trim_start_input.setObjectName("trimStartInput")
+        self.trim_end_label = QLabel()
+        self.trim_end_input = QLineEdit()
+        self.trim_end_input.setObjectName("trimEndInput")
+        self.trim_duration_label = QLabel()
+        self.trim_duration_value_label = QLabel("00:00")
+        self.trim_scope_hint_label = QLabel()
+        self.trim_scope_hint_label.setObjectName("mutedLabel")
+        self.trim_scope_hint_label.setWordWrap(True)
+
+        saved_trim_start = str(self.settings.value("trim_start", "00:00") or "00:00")
+        saved_trim_end = str(self.settings.value("trim_end", "") or "")
+        saved_trim_enabled = str(self.settings.value("trim_enabled", "false")).lower() == "true"
+        if saved_trim_enabled:
+            try:
+                parse_time_range(saved_trim_start, saved_trim_end)
+            except TimeRangeError:
+                saved_trim_enabled = False
+                saved_trim_start = "00:00"
+                saved_trim_end = ""
+        self.trim_start_input.setText(saved_trim_start)
+        self.trim_end_input.setText(saved_trim_end)
+        self.trim_enabled_checkbox.setChecked(saved_trim_enabled)
+        self.trim_enabled_checkbox.toggled.connect(self.handle_trim_changed)
+        self.trim_start_input.textChanged.connect(self.handle_trim_changed)
+        self.trim_end_input.textChanged.connect(self.handle_trim_changed)
+
         self.advanced_toggle_button = QPushButton()
         self.advanced_toggle_button.setObjectName("advancedToggle")
         self.advanced_toggle_button.setCheckable(True)
@@ -1451,6 +1510,8 @@ class MainWindow(QMainWindow):
         self.channel_label = QLabel()
         self.channel_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.duration_label = QLabel()
+        self.trim_preview_label = QLabel()
+        self.trim_preview_label.setObjectName("mutedLabel")
         self.mp3_path_label = QLabel()
         self.mp3_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.mp4_path_label = QLabel()
@@ -1617,6 +1678,26 @@ class MainWindow(QMainWindow):
         basic_settings_layout.addWidget(self.audio_settings_panel, 3)
         basic_settings_layout.addWidget(self.video_settings_panel, 2)
         settings_group_layout.addWidget(self.basic_settings_widget)
+
+        self.trim_settings_panel = QFrame()
+        self.trim_settings_panel.setObjectName("settingsSection")
+        trim_layout = QGridLayout(self.trim_settings_panel)
+        trim_layout.setContentsMargins(10, 8, 10, 8)
+        trim_layout.setHorizontalSpacing(12)
+        trim_layout.setVerticalSpacing(6)
+        trim_layout.addWidget(self.trim_section_title_label, 0, 0, 1, 6)
+        trim_layout.addWidget(self.trim_enabled_checkbox, 1, 0, 1, 2)
+        trim_layout.addWidget(self.trim_start_label, 1, 2)
+        trim_layout.addWidget(self.trim_start_input, 1, 3)
+        trim_layout.addWidget(self.trim_end_label, 1, 4)
+        trim_layout.addWidget(self.trim_end_input, 1, 5)
+        trim_layout.addWidget(self.trim_duration_label, 2, 2)
+        trim_layout.addWidget(self.trim_duration_value_label, 2, 3)
+        trim_layout.addWidget(self.trim_scope_hint_label, 2, 4, 1, 2)
+        trim_layout.setColumnStretch(1, 1)
+        trim_layout.setColumnStretch(3, 1)
+        trim_layout.setColumnStretch(5, 1)
+        settings_group_layout.addWidget(self.trim_settings_panel)
         settings_group_layout.addWidget(self.advanced_toggle_button)
 
         self.advanced_settings_widget = QWidget()
@@ -1702,6 +1783,7 @@ class MainWindow(QMainWindow):
         preview_details.addWidget(self.title_label)
         preview_details.addWidget(self.channel_label)
         preview_details.addWidget(self.duration_label)
+        preview_details.addWidget(self.trim_preview_label)
         preview_details.addWidget(self.mp3_path_label)
         preview_details.addWidget(self.mp4_path_label)
         preview_details.addStretch(1)
@@ -2107,6 +2189,12 @@ class MainWindow(QMainWindow):
             self.input_title_label.setText("輸入" if self.language == "zh" else "Input")
             self.settings_title_label.setText("下載設定" if self.language == "zh" else "Download Settings")
             self.basic_settings_title_label.setText(self.t("basic_settings"))
+            self.trim_section_title_label.setText(self.t("trim_section"))
+            self.trim_enabled_checkbox.setText(self.t("trim_enabled"))
+            self.trim_start_label.setText(self.t("trim_start"))
+            self.trim_end_label.setText(self.t("trim_end"))
+            self.trim_duration_label.setText(self.t("trim_duration"))
+            self.trim_scope_hint_label.setText(self.t("trim_single_video_only"))
             self.file_organization_title_label.setText(self.t("file_organization"))
             self.download_behavior_title_label.setText(self.t("download_behavior"))
             self.video_processing_title_label.setText(self.t("video_processing_section"))
@@ -2132,6 +2220,7 @@ class MainWindow(QMainWindow):
         self.update_custom_template_controls()
         self.update_quality_controls()
         self.update_video_processing_controls()
+        self.update_trim_controls()
         self.update_preview_path_visibility()
 
     def change_language(self) -> None:
@@ -2242,6 +2331,96 @@ class MainWindow(QMainWindow):
     def update_advanced_toggle_text(self) -> None:
         marker = "▼" if self.advanced_toggle_button.isChecked() else "▶"
         self.advanced_toggle_button.setText(f"{marker} {self.t('advanced_settings')}")
+
+    def trim_scope_supported(self) -> bool:
+        if self.download_queue:
+            return (
+                len(self.download_queue) == 1
+                and not is_playlist_url(self.download_queue[0].url)
+                and not self.download_queue[0].playlist_title
+            )
+        urls = self.parse_urls()
+        return len(urls) <= 1 and (not urls or not is_playlist_url(urls[0]))
+
+    def requested_time_range(self, duration_seconds: int | None = None) -> TimeRange | None:
+        if not self.trim_enabled_checkbox.isChecked():
+            return None
+        if not self.trim_scope_supported():
+            raise TimeRangeError(self.t("trim_single_video_only"))
+
+        start = self.trim_start_input.text()
+        end = self.trim_end_input.text()
+        if not end.strip():
+            raise TimeRangeError(self.t("trim_error_end_required"))
+        try:
+            time_range = parse_time_range(start, end)
+        except TimeRangeError as exc:
+            if "greater than start" in str(exc):
+                raise TimeRangeError(self.t("trim_error_end_after_start")) from exc
+            raise TimeRangeError(self.t("trim_error_end_required")) from exc
+
+        if duration_seconds is not None:
+            try:
+                validate_against_duration(time_range, duration_seconds)
+            except TimeRangeError as exc:
+                raise TimeRangeError(self.t("trim_error_end_after_duration")) from exc
+        return time_range
+
+    def update_trim_controls(self) -> None:
+        scope_supported = self.trim_scope_supported()
+        if not scope_supported and self.trim_enabled_checkbox.isChecked():
+            previous = self.trim_enabled_checkbox.blockSignals(True)
+            self.trim_enabled_checkbox.setChecked(False)
+            self.trim_enabled_checkbox.blockSignals(previous)
+            self.settings.setValue("trim_enabled", "false")
+        editable = not self._running and scope_supported
+        self.trim_enabled_checkbox.setEnabled(editable)
+        inputs_enabled = editable and self.trim_enabled_checkbox.isChecked()
+        for widget in (
+            self.trim_start_label,
+            self.trim_start_input,
+            self.trim_end_label,
+            self.trim_end_input,
+        ):
+            widget.setEnabled(inputs_enabled)
+        self.trim_scope_hint_label.setVisible(not scope_supported)
+
+        duration_text = "00:00"
+        try:
+            time_range = parse_time_range(self.trim_start_input.text(), self.trim_end_input.text())
+        except TimeRangeError:
+            pass
+        else:
+            duration_text = format_time_value(time_range.duration_seconds)
+        self.trim_duration_value_label.setText(duration_text)
+        self.trim_duration_label.setEnabled(inputs_enabled)
+        self.trim_duration_value_label.setEnabled(inputs_enabled)
+
+    def update_trim_preview(self, info: VideoInfo | None = None) -> TimeRange | None:
+        if not self.trim_enabled_checkbox.isChecked():
+            self.trim_preview_label.hide()
+            return None
+        try:
+            duration = info.duration if info is not None else None
+            time_range = self.requested_time_range(duration)
+        except TimeRangeError as exc:
+            self.trim_preview_label.setText(str(exc))
+            self.trim_preview_label.show()
+            return None
+
+        self.trim_preview_label.setText(
+            f"{self.t('trim_section')}: "
+            f"{format_time_value(time_range.start_seconds)} → {format_time_value(time_range.end_seconds)}"
+            f" | {self.t('trim_duration')}: {format_time_value(time_range.duration_seconds)}"
+        )
+        self.trim_preview_label.show()
+        return time_range
+
+    def handle_trim_changed(self, *_args) -> None:
+        self.update_trim_controls()
+        self.save_settings()
+        self.clear_preview()
+        self.schedule_preview()
 
     def handle_mode_changed(self) -> None:
         self.update_quality_controls()
@@ -2417,6 +2596,9 @@ class MainWindow(QMainWindow):
                 self.current_video_transcode_options().video_codec,
                 self.current_video_transcode_options().resolution,
                 self.current_video_transcode_options().fps,
+                "trim" if self.trim_enabled_checkbox.isChecked() else "full",
+                self.trim_start_input.text().strip(),
+                self.trim_end_input.text().strip(),
             )
         )
 
@@ -2437,6 +2619,9 @@ class MainWindow(QMainWindow):
     def schedule_preview(self) -> None:
         self.current_info = None
         self.current_info_url = ""
+        self.current_info_key = ""
+        self.update_trim_controls()
+        self.update_trim_preview()
         urls = self.parse_urls()
         if not urls:
             self.clear_preview()
@@ -2463,6 +2648,10 @@ class MainWindow(QMainWindow):
 
         output_dir = self.current_output_dir()
         request_key = self.preview_context_key(url, output_dir)
+        try:
+            time_range = self.requested_time_range()
+        except TimeRangeError:
+            time_range = None
         self.append_status(self.t("fetching_info"))
         self.preview_worker = PreviewWorker(
             url,
@@ -2471,6 +2660,7 @@ class MainWindow(QMainWindow):
             self.current_audio_format(),
             self.current_video_format(),
             self.current_video_transcode_options(),
+            time_range,
         )
         self.preview_worker.finished_ok.connect(
             lambda info, thumbnail: self.preview_finished(url, info, thumbnail, request_key)
@@ -2492,6 +2682,10 @@ class MainWindow(QMainWindow):
         self.duration_label.setText(f"{self.t('duration')}: {format_duration(info.duration, self.t('unknown'))}")
         self.mp3_path_label.setText(f"{info.audio_format.upper()}: {info.mp3_path}")
         self.mp4_path_label.setText(f"{info.video_format.upper()}: {info.mp4_path}")
+        valid_time_range = self.update_trim_preview(info)
+        if self.trim_enabled_checkbox.isChecked() and valid_time_range is None:
+            self.mp3_path_label.setText(f"{info.audio_format.upper()}: -")
+            self.mp4_path_label.setText(f"{info.video_format.upper()}: -")
         self.update_preview_path_visibility()
 
         pixmap = QPixmap()
@@ -2516,6 +2710,7 @@ class MainWindow(QMainWindow):
         self.title_label.setText(f"{self.t('title')}: -")
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
+        self.update_trim_preview()
         self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
         self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
         self.update_preview_path_visibility()
@@ -2526,6 +2721,7 @@ class MainWindow(QMainWindow):
         self.title_label.setText(self.t("batch_preview").format(count=count))
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
+        self.update_trim_preview()
         self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
         self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
         self.update_preview_path_visibility()
@@ -2536,6 +2732,7 @@ class MainWindow(QMainWindow):
         self.title_label.setText(self.t("playlist_preview"))
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
+        self.update_trim_preview()
         self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
         self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
         self.update_preview_path_visibility()
@@ -2586,6 +2783,8 @@ class MainWindow(QMainWindow):
         if self.download_queue:
             self.queue_list.setCurrentRow(min(selected if selected is not None else 0, len(self.download_queue) - 1))
         self.update_queue_buttons()
+        self.update_trim_controls()
+        self.update_trim_preview(self.current_info)
 
     def selected_queue_index(self) -> int | None:
         if not hasattr(self, "queue_list"):
@@ -2728,6 +2927,11 @@ class MainWindow(QMainWindow):
         mode = str(self.mode_combo.currentData())
         audio_format = self.current_audio_format()
         video_format = self.current_video_format()
+        try:
+            time_range = self.requested_time_range()
+        except TimeRangeError as exc:
+            QMessageBox.warning(self, self.t("error"), str(exc))
+            return
         downloaded_by_video_id = history_downloads_by_video_id()
         skip_downloaded = self.skip_downloaded_checkbox.isChecked()
 
@@ -2741,6 +2945,7 @@ class MainWindow(QMainWindow):
                     downloaded_by_video_id,
                     audio_format,
                     video_format,
+                    time_range,
                 )
                 keep_completed = task.status in ("completed", "skipped") and has_requested_outputs
                 if keep_completed or (skip_downloaded and has_requested_outputs):
@@ -2770,6 +2975,7 @@ class MainWindow(QMainWindow):
                     downloaded_by_video_id,
                     audio_format,
                     video_format,
+                    time_range,
                 ):
                     self.append_status(self.t("queue_no_pending"))
                     return
@@ -2785,6 +2991,7 @@ class MainWindow(QMainWindow):
                         downloaded_by_video_id,
                         audio_format,
                         video_format,
+                        time_range,
                     ):
                         task.status = "completed"
                         task.queue_index = index
@@ -2804,9 +3011,15 @@ class MainWindow(QMainWindow):
             return
         has_playlist = any(is_playlist_url(task.url) for task in tasks)
         if len(tasks) == 1 and not is_playlist_url(tasks[0].url):
-            info = self.video_info_for_start(tasks[0].url, output_dir)
+            info = self.video_info_for_start(tasks[0].url, output_dir, time_range)
             if info is None:
                 return
+            if time_range is not None:
+                try:
+                    validate_against_duration(time_range, info.duration)
+                except TimeRangeError:
+                    QMessageBox.warning(self, self.t("error"), self.t("trim_error_end_after_duration"))
+                    return
 
             file_exists_action = self.ask_file_exists_action(info, mode)
             if file_exists_action is None:
@@ -2849,6 +3062,7 @@ class MainWindow(QMainWindow):
             self.t("skip_downloaded_status"),
             self.t("playlist_skip_summary"),
             self.t("retry_attempt"),
+            time_range,
         )
         self.worker.status.connect(self.append_status)
         self.worker.task_updated.connect(self.update_queue_task)
@@ -2857,7 +3071,12 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(lambda worker=self.worker: self.cleanup_worker(worker))
         self.worker.start()
 
-    def video_info_for_start(self, url: str, output_dir: Path) -> VideoInfo | None:
+    def video_info_for_start(
+        self,
+        url: str,
+        output_dir: Path,
+        time_range: TimeRange | None = None,
+    ) -> VideoInfo | None:
         request_key = self.preview_context_key(url, output_dir)
         if self.current_info and self.current_info_url == url and self.current_info_key == request_key:
             return self.current_info
@@ -2870,6 +3089,7 @@ class MainWindow(QMainWindow):
                 audio_format=self.current_audio_format(),
                 video_format=self.current_video_format(),
                 video_processing_options=self.current_video_transcode_options(),
+                time_range=time_range,
             ).fetch_video_info(url)
         except Exception as exc:
             QMessageBox.warning(self, self.t("cannot_read_title"), friendly_error(str(exc), self.language))
@@ -3276,6 +3496,7 @@ class MainWindow(QMainWindow):
         self.update_quality_controls(not running)
         self.update_video_processing_controls(not running)
         self.update_custom_template_controls()
+        self.update_trim_controls()
         self.update_queue_buttons()
 
     def save_settings(self) -> None:
@@ -3311,6 +3532,9 @@ class MainWindow(QMainWindow):
         self.settings.setValue("skip_downloaded", "true" if self.skip_downloaded_checkbox.isChecked() else "false")
         self.settings.setValue("resume_downloads", "true" if self.resume_checkbox.isChecked() else "false")
         self.settings.setValue("max_retries", self.current_max_retries())
+        self.settings.setValue("trim_enabled", "true" if self.trim_enabled_checkbox.isChecked() else "false")
+        self.settings.setValue("trim_start", self.trim_start_input.text().strip())
+        self.settings.setValue("trim_end", self.trim_end_input.text().strip())
         self.settings.setValue("window_size", self.size())
 
     def closeEvent(self, event) -> None:  # noqa: N802

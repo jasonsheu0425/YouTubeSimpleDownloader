@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 
 import ytsimpledownloader.app as app_module
 from ytsimpledownloader.downloader import VideoInfo
+from ytsimpledownloader.time_range import TimeRange
 
 
 @pytest.fixture(scope="module")
@@ -322,7 +323,7 @@ def test_start_download_passes_internal_mode_and_cover_value_to_worker(
             mp4_path=tmp_path / "test.mp4",
         )
         monkeypatch.setattr(window, "selected_output_dir_or_warn", lambda: tmp_path)
-        monkeypatch.setattr(window, "video_info_for_start", lambda _url, _output: info)
+        monkeypatch.setattr(window, "video_info_for_start", lambda _url, _output, _time_range=None: info)
         monkeypatch.setattr(window, "ask_file_exists_action", lambda _info, _mode: "number")
         monkeypatch.setattr(app_module, "history_downloads_by_video_id", lambda: {})
         monkeypatch.setattr(app_module.DownloadWorker, "start", lambda _worker: None)
@@ -332,7 +333,350 @@ def test_start_download_passes_internal_mode_and_cover_value_to_worker(
         assert isinstance(window.worker, app_module.DownloadWorker)
         assert window.worker.mode == "mp3"
         assert window.worker.embed_audio_thumbnail is True
+        assert window.worker.time_range is None
     finally:
         window.worker = None
         window.set_running(False)
+        window.close()
+
+
+def test_trim_controls_default_disabled(qapp, isolated_settings) -> None:
+    window = app_module.MainWindow()
+    try:
+        assert window.trim_enabled_checkbox.isChecked() is False
+        assert window.trim_start_input.text() == "00:00"
+        assert window.trim_end_input.text() == ""
+        assert window.trim_start_input.isEnabled() is False
+        assert window.trim_end_input.isEnabled() is False
+        assert window.trim_duration_value_label.text() == "00:00"
+    finally:
+        window.close()
+
+
+def test_trim_qsettings_save_and_restore(qapp, isolated_settings) -> None:
+    window = app_module.MainWindow()
+    window.trim_enabled_checkbox.setChecked(True)
+    window.trim_start_input.setText("00:30")
+    window.trim_end_input.setText("01:30")
+    window.settings.sync()
+    isolated_settings.sync()
+    assert isolated_settings.value("trim_enabled") == "true"
+    assert isolated_settings.value("trim_start") == "00:30"
+    assert isolated_settings.value("trim_end") == "01:30"
+    window.close()
+
+    restored = app_module.MainWindow()
+    try:
+        assert restored.trim_enabled_checkbox.isChecked() is True
+        assert restored.trim_start_input.text() == "00:30"
+        assert restored.trim_end_input.text() == "01:30"
+        assert restored.requested_time_range() == TimeRange(30, 90)
+    finally:
+        restored.close()
+
+
+def test_invalid_saved_trim_settings_fall_back_safely(qapp, isolated_settings) -> None:
+    isolated_settings.setValue("trim_enabled", "true")
+    isolated_settings.setValue("trim_start", "00:30")
+    isolated_settings.setValue("trim_end", "not-a-time")
+    isolated_settings.sync()
+
+    window = app_module.MainWindow()
+    try:
+        assert window.trim_enabled_checkbox.isChecked() is False
+        assert window.trim_start_input.text() == "00:00"
+        assert window.trim_end_input.text() == ""
+        assert window.trim_start_input.isEnabled() is False
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("start", ["", "00:00"])
+def test_trim_start_blank_or_zero_is_valid(qapp, isolated_settings, start: str) -> None:
+    window = app_module.MainWindow()
+    try:
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_start_input.setText(start)
+        window.trim_end_input.setText("00:30")
+
+        assert window.requested_time_range() == TimeRange(0, 30)
+        assert window.trim_duration_value_label.text() == "00:30"
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "message_key"),
+    [
+        ("00:00", "", "trim_error_end_required"),
+        ("00:30", "00:30", "trim_error_end_after_start"),
+        ("01:00", "00:30", "trim_error_end_after_start"),
+    ],
+)
+def test_invalid_trim_range_is_rejected_before_download(
+    qapp,
+    isolated_settings,
+    monkeypatch: pytest.MonkeyPatch,
+    start: str,
+    end: str,
+    message_key: str,
+) -> None:
+    window = app_module.MainWindow()
+    warnings = []
+    try:
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_start_input.setText(start)
+        window.trim_end_input.setText(end)
+        window.url_input.setPlainText("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+        monkeypatch.setattr(
+            app_module.QMessageBox,
+            "warning",
+            lambda _parent, _title, message: warnings.append(message),
+        )
+
+        window.start_download()
+
+        assert window.worker is None
+        assert warnings == [window.t(message_key)]
+    finally:
+        window.close()
+
+
+def test_trim_end_after_known_duration_is_rejected(
+    qapp,
+    isolated_settings,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    window = app_module.MainWindow()
+    warnings = []
+    try:
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_start_input.setText("00:00")
+        window.trim_end_input.setText("00:30")
+        window.skip_downloaded_checkbox.setChecked(False)
+        window.url_input.setPlainText("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+        info = VideoInfo(
+            title="Test",
+            uploader="Test",
+            duration=10,
+            thumbnail_url="",
+            webpage_url="https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            mp3_path=tmp_path / "test_trim_0s-30s.mp3",
+            mp4_path=tmp_path / "test_trim_0s-30s.mp4",
+        )
+        monkeypatch.setattr(window, "selected_output_dir_or_warn", lambda: tmp_path)
+        monkeypatch.setattr(window, "video_info_for_start", lambda _url, _output, _time_range=None: info)
+        monkeypatch.setattr(
+            app_module.QMessageBox,
+            "warning",
+            lambda _parent, _title, message: warnings.append(message),
+        )
+
+        window.start_download()
+
+        assert window.worker is None
+        assert warnings == [window.t("trim_error_end_after_duration")]
+    finally:
+        window.close()
+
+
+def test_start_download_passes_trim_range_to_worker(
+    qapp,
+    isolated_settings,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    window = app_module.MainWindow()
+    try:
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_start_input.setText("00:30")
+        window.trim_end_input.setText("01:30")
+        window.skip_downloaded_checkbox.setChecked(False)
+        window.url_input.setPlainText("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+        info = VideoInfo(
+            title="Test",
+            uploader="Test",
+            duration=120,
+            thumbnail_url="",
+            webpage_url="https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            mp3_path=tmp_path / "test_trim_30s-90s.mp3",
+            mp4_path=tmp_path / "test_trim_30s-90s.mp4",
+        )
+        monkeypatch.setattr(window, "selected_output_dir_or_warn", lambda: tmp_path)
+        monkeypatch.setattr(window, "video_info_for_start", lambda _url, _output, _time_range=None: info)
+        monkeypatch.setattr(window, "ask_file_exists_action", lambda _info, _mode: "number")
+        monkeypatch.setattr(app_module, "history_downloads_by_video_id", lambda: {})
+        monkeypatch.setattr(app_module.DownloadWorker, "start", lambda _worker: None)
+
+        window.start_download()
+
+        assert isinstance(window.worker, app_module.DownloadWorker)
+        assert window.worker.time_range == TimeRange(30, 90)
+    finally:
+        window.worker = None
+        window.set_running(False)
+        window.close()
+
+
+def test_trim_controls_follow_running_lock(qapp, isolated_settings) -> None:
+    window = app_module.MainWindow()
+    try:
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_end_input.setText("00:30")
+
+        window.set_running(True)
+        assert window.trim_enabled_checkbox.isEnabled() is False
+        assert window.trim_start_input.isEnabled() is False
+        assert window.trim_end_input.isEnabled() is False
+
+        window.set_running(False)
+        assert window.trim_enabled_checkbox.isEnabled() is True
+        assert window.trim_start_input.isEnabled() is True
+        assert window.trim_end_input.isEnabled() is True
+    finally:
+        window.close()
+
+
+def test_trim_labels_update_with_language(qapp, isolated_settings) -> None:
+    window = app_module.MainWindow()
+    try:
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_start_input.setText("00:30")
+        window.trim_end_input.setText("01:30")
+        window.update_trim_preview()
+
+        _set_combo_data(window.language_combo, "en")
+        assert window.trim_section_title_label.text() == "Time Range (Optional)"
+        assert window.trim_enabled_checkbox.text() == "Download only the selected segment"
+        assert window.trim_start_label.text() == "Start"
+        assert window.trim_end_label.text() == "End"
+        assert window.trim_duration_label.text() == "Segment duration"
+        assert "00:30 → 01:30" in window.trim_preview_label.text()
+
+        _set_combo_data(window.language_combo, "zh")
+        assert window.trim_section_title_label.text() == "時間範圍（可選）"
+        assert window.trim_enabled_checkbox.text() == "只下載指定片段"
+        assert "00:30 → 01:30" in window.trim_preview_label.text()
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize(
+    "url_text",
+    [
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw\nhttps://youtu.be/dQw4w9WgXcQ",
+        "https://www.youtube.com/playlist?list=PL1234567890abcdef",
+    ],
+)
+def test_trim_is_clearly_disabled_for_multi_url_or_playlist(
+    qapp,
+    isolated_settings,
+    url_text: str,
+) -> None:
+    window = app_module.MainWindow()
+    try:
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_end_input.setText("00:30")
+        window.url_input.setPlainText(url_text)
+        window.schedule_preview()
+
+        assert window.trim_enabled_checkbox.isEnabled() is False
+        assert window.trim_enabled_checkbox.isChecked() is False
+        assert window.trim_scope_hint_label.isHidden() is False
+        assert window.trim_scope_hint_label.text() == window.t("trim_single_video_only")
+    finally:
+        window.close()
+
+
+def test_trim_is_disabled_for_single_item_expanded_from_playlist(qapp, isolated_settings) -> None:
+    window = app_module.MainWindow()
+    try:
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_end_input.setText("00:30")
+        window.download_queue = [
+            app_module.QueueTask(
+                url="https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                playlist_title="Test Playlist",
+                playlist_index=1,
+            )
+        ]
+        window.refresh_queue()
+
+        assert window.trim_enabled_checkbox.isChecked() is False
+        assert window.trim_enabled_checkbox.isEnabled() is False
+        assert window.trim_scope_hint_label.isHidden() is False
+    finally:
+        window.close()
+
+
+def test_preview_worker_and_labels_use_trim_range(
+    qapp,
+    isolated_settings,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    window = app_module.MainWindow()
+    url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    try:
+        window.url_input.setPlainText(url)
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_start_input.setText("00:30")
+        window.trim_end_input.setText("01:30")
+        monkeypatch.setattr(app_module.PreviewWorker, "start", lambda _worker: None)
+
+        window.start_preview()
+
+        assert isinstance(window.preview_worker, app_module.PreviewWorker)
+        assert window.preview_worker.time_range == TimeRange(30, 90)
+        info = VideoInfo(
+            title="Test",
+            uploader="Test",
+            duration=120,
+            thumbnail_url="",
+            webpage_url=url,
+            mp3_path=tmp_path / "Test_trim_30s-90s.mp3",
+            mp4_path=tmp_path / "Test_trim_30s-90s.mp4",
+        )
+        request_key = window.preview_context_key(url, window.current_output_dir())
+        window.preview_finished(url, info, b"", request_key)
+
+        assert "00:30 → 01:30" in window.trim_preview_label.text()
+        assert "01:00" in window.trim_preview_label.text()
+        assert "_trim_30s-90s" in window.mp3_path_label.text()
+        assert "_trim_30s-90s" in window.mp4_path_label.text()
+    finally:
+        window.preview_worker = None
+        window.close()
+
+
+def test_preview_rejects_trim_end_after_video_duration(
+    qapp,
+    isolated_settings,
+    tmp_path: Path,
+) -> None:
+    window = app_module.MainWindow()
+    url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    try:
+        window.url_input.setPlainText(url)
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_start_input.setText("00:00")
+        window.trim_end_input.setText("00:30")
+        info = VideoInfo(
+            title="Test",
+            uploader="Test",
+            duration=10,
+            thumbnail_url="",
+            webpage_url=url,
+            mp3_path=tmp_path / "Test_trim_0s-30s.mp3",
+            mp4_path=tmp_path / "Test_trim_0s-30s.mp4",
+        )
+        request_key = window.preview_context_key(url, window.current_output_dir())
+
+        window.preview_finished(url, info, b"", request_key)
+
+        assert window.trim_preview_label.text() == window.t("trim_error_end_after_duration")
+        assert window.mp3_path_label.text().endswith(": -")
+        assert window.mp4_path_label.text().endswith(": -")
+    finally:
         window.close()
