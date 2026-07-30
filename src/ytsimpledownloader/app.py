@@ -165,6 +165,7 @@ TEXT = {
         "trim_start": "開始",
         "trim_end": "結束",
         "trim_duration": "片段長度",
+        "trim_range_display": "裁剪範圍：{start} → {end}（片段長度：{duration}）",
         "trim_single_video_only": "時間範圍下載目前僅支援單一影片",
         "trim_error_end_required": "請輸入有效的結束時間",
         "trim_error_end_after_start": "結束時間必須大於開始時間",
@@ -345,6 +346,7 @@ TEXT = {
         "trim_start": "Start",
         "trim_end": "End",
         "trim_duration": "Segment duration",
+        "trim_range_display": "Trim range: {start} → {end} (Duration: {duration})",
         "trim_single_video_only": "Time range downloads currently support a single video only",
         "trim_error_end_required": "Please enter a valid end time",
         "trim_error_end_after_start": "End time must be greater than start time",
@@ -1110,6 +1112,14 @@ def history_time_range(item: dict) -> TimeRange | None:
         )
     except (KeyError, TimeRangeError):
         return None
+
+
+def format_trim_range_display(time_range: TimeRange, template: str) -> str:
+    return template.format(
+        start=format_time_value(time_range.start_seconds),
+        end=format_time_value(time_range.end_seconds),
+        duration=format_time_value(time_range.duration_seconds),
+    )
 
 
 def build_history_record(fields: dict, time_range: TimeRange | None = None) -> dict:
@@ -3234,6 +3244,12 @@ class MainWindow(QMainWindow):
         for entry in entries:
             title = entry.get("title") or entry.get("url") or ""
             error = entry.get("error") or ""
+            time_range = entry.get("time_range")
+            trim_display = (
+                format_trim_range_display(time_range, self.t("trim_range_display"))
+                if isinstance(time_range, TimeRange)
+                else ""
+            )
             if error:
                 failed_count += 1
                 label = f"{entry.get('index', '')}. {self.t('batch_item_failed')}: {title} - {friendly_error(error, self.language)}"
@@ -3253,6 +3269,8 @@ class MainWindow(QMainWindow):
                 label = f"{prefix}{display_label_for_result(mode, path)}: {path}"
                 if skipped:
                     label += f" ({self.t('skipped')})"
+                if trim_display:
+                    label += f" | {trim_display}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, path)
                 self.result_list.addItem(item)
@@ -3378,6 +3396,9 @@ class MainWindow(QMainWindow):
             path = paths[0] if paths else ""
             mode_text = download_mode_text(item.get("mode", ""), self.language)
             text = f"{item.get('time', '')} | {mode_text} | {item.get('title', '')}"
+            time_range = history_time_range(item)
+            if time_range is not None:
+                text += f" | {format_trim_range_display(time_range, self.t('trim_range_display'))}"
             row = QListWidgetItem(text)
             row.setData(Qt.ItemDataRole.UserRole, path)
             self.history_list.addItem(row)
