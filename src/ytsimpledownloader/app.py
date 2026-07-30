@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTextEdit,
@@ -1526,6 +1527,16 @@ class MainWindow(QMainWindow):
         self.mp3_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.mp4_path_label = QLabel()
         self.mp4_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        for preview_detail_label in (
+            self.title_label,
+            self.channel_label,
+            self.trim_preview_label,
+            self.mp3_path_label,
+            self.mp4_path_label,
+        ):
+            preview_detail_label.setWordWrap(True)
+            preview_detail_label.setMinimumWidth(0)
+            preview_detail_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
@@ -2690,12 +2701,12 @@ class MainWindow(QMainWindow):
         self.title_label.setText(f"{self.t('title')}: {info.title}")
         self.channel_label.setText(f"{self.t('channel')}: {info.uploader}")
         self.duration_label.setText(f"{self.t('duration')}: {format_duration(info.duration, self.t('unknown'))}")
-        self.mp3_path_label.setText(f"{info.audio_format.upper()}: {info.mp3_path}")
-        self.mp4_path_label.setText(f"{info.video_format.upper()}: {info.mp4_path}")
+        self.set_preview_path_label(self.mp3_path_label, info.audio_format, info.mp3_path)
+        self.set_preview_path_label(self.mp4_path_label, info.video_format, info.mp4_path)
         valid_time_range = self.update_trim_preview(info)
         if self.trim_enabled_checkbox.isChecked() and valid_time_range is None:
-            self.mp3_path_label.setText(f"{info.audio_format.upper()}: -")
-            self.mp4_path_label.setText(f"{info.video_format.upper()}: -")
+            self.set_preview_path_label(self.mp3_path_label, info.audio_format)
+            self.set_preview_path_label(self.mp4_path_label, info.video_format)
         self.update_preview_path_visibility()
 
         pixmap = QPixmap()
@@ -2721,8 +2732,8 @@ class MainWindow(QMainWindow):
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
         self.update_trim_preview()
-        self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
-        self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
+        self.set_preview_path_label(self.mp3_path_label, self.current_audio_format())
+        self.set_preview_path_label(self.mp4_path_label, self.current_video_format())
         self.update_preview_path_visibility()
 
     def show_batch_preview(self, count: int) -> None:
@@ -2732,8 +2743,8 @@ class MainWindow(QMainWindow):
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
         self.update_trim_preview()
-        self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
-        self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
+        self.set_preview_path_label(self.mp3_path_label, self.current_audio_format())
+        self.set_preview_path_label(self.mp4_path_label, self.current_video_format())
         self.update_preview_path_visibility()
 
     def show_playlist_preview(self) -> None:
@@ -2743,9 +2754,16 @@ class MainWindow(QMainWindow):
         self.channel_label.setText(f"{self.t('channel')}: -")
         self.duration_label.setText(f"{self.t('duration')}: -")
         self.update_trim_preview()
-        self.mp3_path_label.setText(f"{self.current_audio_format().upper()}: -")
-        self.mp4_path_label.setText(f"{self.current_video_format().upper()}: -")
+        self.set_preview_path_label(self.mp3_path_label, self.current_audio_format())
+        self.set_preview_path_label(self.mp4_path_label, self.current_video_format())
         self.update_preview_path_visibility()
+
+    @staticmethod
+    def set_preview_path_label(label: QLabel, format_name: str, path: Path | str | None = None) -> None:
+        value = str(path) if path is not None else "-"
+        text = f"{format_name.upper()}: {value}"
+        label.setText(text)
+        label.setToolTip(text if path is not None else "")
 
     def update_preview_path_visibility(self) -> None:
         mode = self.mode_combo.currentData()

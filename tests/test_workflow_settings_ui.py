@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSizePolicy
 
 import ytsimpledownloader.app as app_module
 from ytsimpledownloader.downloader import VideoInfo
@@ -647,6 +647,58 @@ def test_preview_worker_and_labels_use_trim_range(
         assert "_trim_30s-90s" in window.mp4_path_label.text()
     finally:
         window.preview_worker = None
+        window.close()
+
+
+def test_long_preview_paths_do_not_expand_scrollable_content(
+    qapp,
+    isolated_settings,
+    tmp_path: Path,
+) -> None:
+    window = app_module.MainWindow()
+    url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    long_title = "Very_Long_Video_Title_" * 14
+    mp3_path = tmp_path / f"{long_title}_trim_30s-90s.mp3"
+    mp4_path = tmp_path / f"{long_title}_trim_30s-90s.mp4"
+    try:
+        window.resize(1400, 900)
+        _set_combo_data(window.mode_combo, "both")
+        window.url_input.setPlainText(url)
+        window.trim_enabled_checkbox.setChecked(True)
+        window.trim_start_input.setText("00:30")
+        window.trim_end_input.setText("01:30")
+        info = VideoInfo(
+            title=long_title,
+            uploader="Test",
+            duration=120,
+            thumbnail_url="",
+            webpage_url=url,
+            mp3_path=mp3_path,
+            mp4_path=mp4_path,
+        )
+        request_key = window.preview_context_key(url, window.current_output_dir())
+
+        window.preview_finished(url, info, b"", request_key)
+        _process_layout(qapp, window)
+
+        viewport_width = window.content_scroll.viewport().width()
+        assert window.content_scroll.horizontalScrollBar().maximum() == 0
+        assert window.content_root.minimumSizeHint().width() <= viewport_width
+        assert window.queue_group.isVisible() is True
+        assert window.trim_end_input.isVisible() is True
+        for label, expected_path in (
+            (window.mp3_path_label, mp3_path),
+            (window.mp4_path_label, mp4_path),
+        ):
+            assert label.minimumWidth() == 0
+            assert label.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+            assert label.wordWrap() is True
+            assert "_trim_30s-90s" in label.text()
+            assert str(expected_path) in label.toolTip()
+        assert "00:30" in window.trim_preview_label.text()
+        assert "01:30" in window.trim_preview_label.text()
+        assert "01:00" in window.trim_preview_label.text()
+    finally:
         window.close()
 
 
