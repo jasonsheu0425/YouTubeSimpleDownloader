@@ -667,6 +667,7 @@ def test_long_preview_paths_do_not_expand_scrollable_content(
         window.trim_enabled_checkbox.setChecked(True)
         window.trim_start_input.setText("00:30")
         window.trim_end_input.setText("01:30")
+        window.preview_timer.stop()
         info = VideoInfo(
             title=long_title,
             uploader="Test",
