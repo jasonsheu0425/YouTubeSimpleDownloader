@@ -51,6 +51,12 @@ from .downloader import (
     extract_video_id,
     is_playlist_url,
 )
+from .history_store import (
+    HISTORY_SCHEMA_VERSION,
+    build_history_record,
+    download_key_for_mode,
+    history_time_range,
+)
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 from .media_probe import probe_media
 from .network_security import fetch_thumbnail_bytes, validate_youtube_url
@@ -90,7 +96,6 @@ from .ui_text import (
 
 
 HISTORY_PATH = PROJECT_DIR / "history.json"
-HISTORY_SCHEMA_VERSION = 3
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "app_icon.ico"
 SUPPORTED_LOCAL_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
 
@@ -665,23 +670,6 @@ def download_mode_for_missing_modes(missing_modes: list[str]) -> str:
     return ""
 
 
-def download_key_for_mode(
-    mode: str,
-    audio_format: str,
-    video_format: str,
-    time_range: TimeRange | None = None,
-) -> str:
-    if mode == "mp3":
-        key = f"audio:{audio_format}"
-    elif mode == "mp4":
-        key = f"video:{video_format}"
-    else:
-        key = mode
-    if time_range is not None:
-        key = f"{key}:{time_range.identity_key()}"
-    return key
-
-
 def modes_for_paths(paths: list[str]) -> list[str]:
     modes = []
     for raw_path in paths:
@@ -705,29 +693,6 @@ def load_history() -> list[dict]:
 
 def save_history(items: list[dict]) -> None:
     HISTORY_PATH.write_text(json.dumps(items[:100], ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def history_time_range(item: dict) -> TimeRange | None:
-    if item.get("trimmed") is not True:
-        return None
-    try:
-        return TimeRange(
-            start_seconds=item["trim_start_seconds"],
-            end_seconds=item["trim_end_seconds"],
-        )
-    except (KeyError, TimeRangeError):
-        return None
-
-
-def build_history_record(fields: dict, time_range: TimeRange | None = None) -> dict:
-    return {
-        **fields,
-        "schema_version": HISTORY_SCHEMA_VERSION,
-        "trimmed": time_range is not None,
-        "trim_start_seconds": time_range.start_seconds if time_range is not None else None,
-        "trim_end_seconds": time_range.end_seconds if time_range is not None else None,
-        "trim_duration_seconds": time_range.duration_seconds if time_range is not None else None,
-    }
 
 
 def history_downloads_by_video_id() -> dict[str, dict[str, str]]:
