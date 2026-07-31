@@ -7,7 +7,7 @@ A Windows desktop application for saving public YouTube videos and playlists as 
 Download the installer from the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). The normal installer is:
 
 ```text
-YouTubeSimpleDownloader_Setup_v0.9.8-inno-self-signed.exe
+YouTubeSimpleDownloader_Setup_v0.10.0-inno-self-signed.exe
 ```
 
 The installer defaults to the per-user location below and shows the destination page on every run. It does not reuse an older install folder automatically.
@@ -32,6 +32,7 @@ It creates a Start Menu shortcut and can create a desktop shortcut. No `E:` driv
 - Video quality: Best, 1080p, 720p, and 480p.
 - Folder grouping and filename formats, including playlist folders.
 - Preview title, channel, duration, thumbnail, and expected output paths.
+- Optional Trim Download for a single video using seconds, `MM:SS`, or `HH:MM:SS` start and end values.
 - Download history, result actions, and Traditional Chinese / English UI.
 - Non-blocking update reminders for newer stable GitHub releases, with an option to disable automatic checks.
 - H.264 MP4 transcoding, an osu! compatible video preset, local video batch conversion, and media probing.
@@ -71,7 +72,7 @@ The release installer is self-signed for testing and friend-to-friend sharing. W
 Verify an installer after downloading it:
 
 ```powershell
-Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.9.8-inno-self-signed.exe -Algorithm SHA256
+Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.10.0-inno-self-signed.exe -Algorithm SHA256
 ```
 
 Compare the reported hash with the value in the matching GitHub Release.
@@ -81,8 +82,9 @@ Compare the reported hash with the value in the matching GitHub Release.
 1. Paste one video URL to load its preview, or paste multiple URLs one per line.
 2. Choose audio, video, or audio + video, then select the desired formats and quality.
 3. Select an output folder and choose folder or filename rules if needed.
-4. Start downloading. Multiple URLs and playlists are expanded into the queue.
-5. Open the file, copy its path, or reveal it in Explorer from the result list.
+4. For a single video, optionally enable Trim Download and enter a start and end time. Playlist and multi-URL trimming are not supported.
+5. Start downloading. Multiple URLs and playlists are expanded into the queue.
+6. Open the file, copy its path, or reveal it in Explorer from the result list.
 
 For a playlist that changes over time, leave **Skip previously downloaded videos** enabled. Later runs check the recorded output formats and download only missing videos or formats.
 
@@ -170,7 +172,7 @@ Build the self-signed Inno Setup installer after the EXE bundle is ready:
 Expected installer:
 
 ```text
-release\YouTubeSimpleDownloader_Setup_v0.9.8-inno-self-signed.exe
+release\YouTubeSimpleDownloader_Setup_v0.10.0-inno-self-signed.exe
 ```
 
 ## Contributing and security

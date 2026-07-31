@@ -1,3 +1,31 @@
+# YouTube Simple Downloader v0.10.0
+
+## v0.10.0 - Trim Download
+
+### Added
+
+- Added optional time-range downloads for a single public YouTube video.
+- Start and end values accept integer seconds, `MM:SS`, or `HH:MM:SS`.
+- Preview now shows the trim range, clip duration, and expected output path.
+- Download results and history entries show the applied trim range and duration.
+- History schema v3 records whether an item was trimmed and stores its start, end, and clip duration in seconds.
+- Full downloads and different trim ranges use separate history and skip identities.
+- Trimmed output filenames include a stable range suffix such as `_trim_30s-90s`.
+- Fixed preview layout overflow caused by long expected output paths while preserving the full path in a tooltip.
+
+### Current limitations
+
+- Trim Download supports one video at a time.
+- Playlist and multi-URL trimming are not supported.
+- Multiple trim segments, a draggable timeline, local-video trimming, and SponsorBlock are not supported.
+- Login, cookies, private, paid, members-only, age-restricted, and DRM-protected content are not supported.
+
+### Build and security boundaries
+
+- Bundled FFmpeg remains `8.1.2-essentials_build-www.gyan.dev` and is verified against the project artifact hash policy before packaging.
+- Bundled yt-dlp is `2026.6.9`, matching the pinned runtime dependency.
+- Release builds continue to verify the bundled FFmpeg artifact before PyInstaller and again before Inno Setup packaging.
+
 # YouTube Simple Downloader v0.9.8
 
 ## v0.9.8 - Security Hardening
