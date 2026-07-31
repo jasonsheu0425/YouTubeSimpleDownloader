@@ -15,12 +15,6 @@ from ytsimpledownloader.downloader import VideoInfo
 from ytsimpledownloader.time_range import TimeRange
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    application = QApplication.instance() or QApplication([])
-    yield application
-
-
 @pytest.fixture
 def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> QSettings:
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)

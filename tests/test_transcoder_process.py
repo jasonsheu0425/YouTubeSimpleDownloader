@@ -126,6 +126,7 @@ def test_cancel_event_terminates_running_process(tmp_path: Path) -> None:
             transcoder._run_ffmpeg(command, duration=None)
     finally:
         timer.cancel()
+        timer.join(timeout=1.0)
 
     assert time.monotonic() - started < 3.0
     time.sleep(0.1)
