@@ -54,6 +54,12 @@ from .downloader import (
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 from .media_probe import probe_media
 from .network_security import fetch_thumbnail_bytes, validate_youtube_url
+from .result_display import (
+    display_label_for_result,
+    format_history_item_text,
+    format_result_item_text,
+    format_trim_range_display,
+)
 from .time_range import (
     TimeRange,
     TimeRangeError,
@@ -676,17 +682,6 @@ def download_key_for_mode(
     return key
 
 
-def display_label_for_result(mode: str, path: str) -> str:
-    suffix = Path(str(path)).suffix.lower().lstrip(".")
-    if suffix:
-        return suffix.upper()
-    if mode == "mp3":
-        return "AUDIO"
-    if mode == "mp4":
-        return "VIDEO"
-    return mode.upper()
-
-
 def modes_for_paths(paths: list[str]) -> list[str]:
     modes = []
     for raw_path in paths:
@@ -722,14 +717,6 @@ def history_time_range(item: dict) -> TimeRange | None:
         )
     except (KeyError, TimeRangeError):
         return None
-
-
-def format_trim_range_display(time_range: TimeRange, template: str) -> str:
-    return template.format(
-        start=format_time_value(time_range.start_seconds),
-        end=format_time_value(time_range.end_seconds),
-        duration=format_time_value(time_range.duration_seconds),
-    )
 
 
 def build_history_record(fields: dict, time_range: TimeRange | None = None) -> dict:
@@ -2872,11 +2859,8 @@ class MainWindow(QMainWindow):
             title = entry.get("title") or entry.get("url") or ""
             error = entry.get("error") or ""
             time_range = entry.get("time_range")
-            trim_display = (
-                format_trim_range_display(time_range, self.t("trim_range_display"))
-                if isinstance(time_range, TimeRange)
-                else ""
-            )
+            display_time_range = time_range if isinstance(time_range, TimeRange) else None
+            trim_template = self.t("trim_range_display") if display_time_range is not None else ""
             if error:
                 failed_count += 1
                 label = f"{entry.get('index', '')}. {self.t('batch_item_failed')}: {title} - {friendly_error(error, self.language)}"
@@ -2893,11 +2877,15 @@ class MainWindow(QMainWindow):
             for mode, path, skipped in results:
                 paths.append(path)
                 prefix = f"{entry.get('index')}. {title} - " if is_batch else ""
-                label = f"{prefix}{display_label_for_result(mode, path)}: {path}"
-                if skipped:
-                    label += f" ({self.t('skipped')})"
-                if trim_display:
-                    label += f" | {trim_display}"
+                label = format_result_item_text(
+                    mode,
+                    path,
+                    prefix=prefix,
+                    skipped=skipped,
+                    skipped_label=self.t("skipped") if skipped else "",
+                    time_range=display_time_range,
+                    trim_template=trim_template,
+                )
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, path)
                 self.result_list.addItem(item)
@@ -3021,11 +3009,15 @@ class MainWindow(QMainWindow):
         for item in load_history()[:50]:
             paths = item.get("paths") or []
             path = paths[0] if paths else ""
-            mode_text = download_mode_text(item.get("mode", ""), self.language)
-            text = f"{item.get('time', '')} | {mode_text} | {item.get('title', '')}"
             time_range = history_time_range(item)
-            if time_range is not None:
-                text += f" | {format_trim_range_display(time_range, self.t('trim_range_display'))}"
+            text = format_history_item_text(
+                item.get("time", ""),
+                item.get("mode", ""),
+                item.get("title", ""),
+                self.language,
+                time_range=time_range,
+                trim_template=self.t("trim_range_display") if time_range is not None else "",
+            )
             row = QListWidgetItem(text)
             row.setData(Qt.ItemDataRole.UserRole, path)
             self.history_list.addItem(row)
