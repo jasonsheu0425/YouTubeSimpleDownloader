@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
 import re
@@ -60,6 +59,7 @@ from .history_store import (
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 from .media_probe import probe_media
 from .network_security import fetch_thumbnail_bytes, validate_youtube_url
+from .queue_models import QueueTask, copy_queue_task
 from .result_display import (
     display_label_for_result,
     format_history_item_text,
@@ -98,21 +98,6 @@ from .ui_text import (
 HISTORY_PATH = PROJECT_DIR / "history.json"
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "app_icon.ico"
 SUPPORTED_LOCAL_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
-
-
-@dataclass
-class QueueTask:
-    url: str
-    title: str = ""
-    status: str = "waiting"
-    error: str = ""
-    attempts: int = 0
-    max_retries: int = 0
-    last_error: str = ""
-    friendly_error: str = ""
-    queue_index: int = -1
-    playlist_title: str = ""
-    playlist_index: int | None = None
 
 
 class PreviewWorker(QThread):
@@ -200,22 +185,6 @@ class QueueBuildWorker(QThread):
             else:
                 tasks.append(QueueTask(url=url, title=url))
         self.finished_ok.emit(tasks, errors)
-
-
-def copy_queue_task(task: QueueTask) -> QueueTask:
-    return QueueTask(
-        url=task.url,
-        title=task.title,
-        status=task.status,
-        error=task.error,
-        attempts=task.attempts,
-        max_retries=task.max_retries,
-        last_error=task.last_error,
-        friendly_error=task.friendly_error,
-        queue_index=task.queue_index,
-        playlist_title=task.playlist_title,
-        playlist_index=task.playlist_index,
-    )
 
 
 class DownloadWorker(QThread):
