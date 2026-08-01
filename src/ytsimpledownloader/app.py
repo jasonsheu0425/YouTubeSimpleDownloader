@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
@@ -55,6 +54,8 @@ from .history_store import (
     build_history_record,
     download_key_for_mode,
     history_time_range,
+    load_history as load_history_from_path,
+    save_history as save_history_to_path,
 )
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
 from .media_probe import probe_media
@@ -651,17 +652,11 @@ def modes_for_paths(paths: list[str]) -> list[str]:
 
 
 def load_history() -> list[dict]:
-    if not HISTORY_PATH.exists():
-        return []
-    try:
-        data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    return data if isinstance(data, list) else []
+    return load_history_from_path(HISTORY_PATH)
 
 
 def save_history(items: list[dict]) -> None:
-    HISTORY_PATH.write_text(json.dumps(items[:100], ensure_ascii=False, indent=2), encoding="utf-8")
+    save_history_to_path(HISTORY_PATH, items)
 
 
 def history_downloads_by_video_id() -> dict[str, dict[str, str]]:

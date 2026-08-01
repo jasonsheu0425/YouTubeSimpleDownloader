@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from .time_range import TimeRange, TimeRangeError
 
 
 HISTORY_SCHEMA_VERSION = 3
+
+
+def load_history(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def save_history(path: Path, items: list[dict], *, limit: int = 100) -> None:
+    path.write_text(json.dumps(items[:limit], ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def download_key_for_mode(
