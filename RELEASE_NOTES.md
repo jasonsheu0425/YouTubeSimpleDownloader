@@ -1,3 +1,27 @@
+# YouTube Simple Downloader v0.10.1
+
+## v0.10.1 - App Slimming Maintenance
+
+### Maintenance
+
+- Reduced responsibilities in `app.py` by extracting focused modules:
+  `ui_text.py`, `result_display.py`, `history_store.py`,
+  `queue_models.py`, and `error_messages.py`.
+- Added focused regression tests for extracted helpers,
+  history persistence, queue models, display formatting, and error messages.
+
+### Compatibility
+
+- No new user-facing features.
+- No history schema or QSettings changes.
+- No downloader, transcoder, Trim Download, or update-check behavior changes.
+- No installer behavior changes beyond the normal version bump.
+
+### Validation baseline
+
+- Main passed 267 tests before release-candidate preparation.
+- Compile validation and the bundled FFmpeg SHA-256 verifier passed.
+
 # YouTube Simple Downloader v0.10.0
 
 ## v0.10.0 - Trim Download
