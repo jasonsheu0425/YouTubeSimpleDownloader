@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import tempfile
 
 from .time_range import TimeRange, TimeRangeError
 
@@ -20,7 +22,36 @@ def load_history(path: Path) -> list[dict]:
 
 
 def save_history(path: Path, items: list[dict], *, limit: int = 100) -> None:
-    path.write_text(json.dumps(items[:limit], ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = json.dumps(items[:limit], ensure_ascii=False, indent=2)
+    descriptor = -1
+    temporary_path: Path | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        temporary_path = Path(temporary_name)
+        stream = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = -1
+        with stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
 
 
 def download_key_for_mode(
