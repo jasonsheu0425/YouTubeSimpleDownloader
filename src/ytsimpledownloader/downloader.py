@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from shutil import which
 from threading import Event
 from typing import Callable, Literal
 from urllib.parse import parse_qs, urlparse
@@ -15,6 +14,7 @@ from .media_probe import probe_media
 from .network_security import YOUTUBE_HOSTS, YOUTUBE_SHORT_HOSTS, validate_youtube_url
 from .time_range import TimeRange
 from .transcoder import VideoTranscodeOptions, VideoTranscoder
+from .yt_dlp_runtime import collect_runtime_diagnostics, javascript_runtime_options
 
 
 DownloadMode = Literal["mp3", "mp4", "both"]
@@ -160,6 +160,7 @@ class SingleVideoDownloader:
         self.output_options = output_options or DEFAULT_OUTPUT_OPTIONS
         self.resume_downloads = resume_downloads
         self.ffmpeg_path = self._ensure_ffmpeg_exe()
+        self.runtime_diagnostics = collect_runtime_diagnostics()
 
     def fetch_video_info(
         self,
@@ -402,10 +403,7 @@ class SingleVideoDownloader:
             "nopart": False,
             "logger": YtDlpLogger(self._emit),
         }
-        node_path = which("node")
-        if node_path:
-            opts["js_runtimes"] = {"node": {"path": node_path}}
-            opts["remote_components"] = ["ejs:github"]
+        opts.update(javascript_runtime_options(self.runtime_diagnostics))
         return opts
 
     def _download_range_options(self) -> dict:
