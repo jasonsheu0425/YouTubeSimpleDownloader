@@ -52,10 +52,13 @@ from .downloader import (
 from .error_messages import error_key, friendly_error
 from .history_store import (
     HISTORY_SCHEMA_VERSION,
+    HistoryLoadResult,
+    HistoryLoadStatus,
     build_history_record,
     download_key_for_mode,
     history_time_range,
     load_history as load_history_from_path,
+    load_history_result as load_history_result_from_path,
     save_history as save_history_to_path,
 )
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
@@ -588,9 +591,18 @@ def save_history(items: list[dict]) -> None:
     save_history_to_path(HISTORY_PATH, items)
 
 
-def history_downloads_by_video_id() -> dict[str, dict[str, str]]:
+def load_history_result() -> HistoryLoadResult:
+    return load_history_result_from_path(HISTORY_PATH)
+
+
+def history_downloads_by_video_id(items: list[dict] | None = None) -> dict[str, dict[str, str]]:
+    if items is None:
+        result = load_history_result()
+        if not result.safe_to_write:
+            return {}
+        items = result.items
     downloads: dict[str, dict[str, str]] = {}
-    for item in load_history():
+    for item in items:
         video_id = str(item.get("video_id") or extract_video_id(str(item.get("url") or "")))
         if not video_id:
             continue
@@ -2414,7 +2426,8 @@ class MainWindow(QMainWindow):
         except TimeRangeError as exc:
             QMessageBox.warning(self, self.t("error"), str(exc))
             return
-        downloaded_by_video_id = history_downloads_by_video_id()
+        history_result = load_history_result()
+        downloaded_by_video_id = history_downloads_by_video_id(history_result.items)
         skip_downloaded = self.skip_downloaded_checkbox.isChecked()
 
         if isinstance(retry_failed_only, bool) and retry_failed_only:
@@ -2510,6 +2523,7 @@ class MainWindow(QMainWindow):
             file_exists_action = "number"
 
         self.status_box.clear()
+        self.report_history_load_status(history_result)
         self.result_list.clear()
         self.progress_bar.setValue(0)
         self.progress_label.setText(self.t("progress_waiting"))
@@ -2796,7 +2810,11 @@ class MainWindow(QMainWindow):
     def add_history(self, info: VideoInfo, url: str, paths: list[str], entry: dict | None = None) -> None:
         video_options = self.current_video_transcode_options()
         time_range = entry.get("time_range") if entry and isinstance(entry.get("time_range"), TimeRange) else None
-        items = load_history()
+        result = load_history_result()
+        self.report_history_load_status(result)
+        if not result.safe_to_write:
+            return
+        items = list(result.items)
         items.insert(
             0,
             build_history_record({
@@ -2824,12 +2842,20 @@ class MainWindow(QMainWindow):
                 "media_info": entry.get("media_info").summary() if entry and entry.get("media_info") else "",
             }, time_range),
         )
-        save_history(items)
+        try:
+            save_history(items)
+        except OSError as exc:
+            self.append_status(self.t("history_save_failed").format(error=exc))
+            return
         self.refresh_history()
 
     def add_local_history(self, entry: dict, paths: list[str]) -> None:
         video_options = self.current_video_transcode_options()
-        items = load_history()
+        result = load_history_result()
+        self.report_history_load_status(result)
+        if not result.safe_to_write:
+            return
+        items = list(result.items)
         items.insert(
             0,
             build_history_record({
@@ -2857,14 +2883,32 @@ class MainWindow(QMainWindow):
                 "media_info": entry.get("media_info").summary() if entry.get("media_info") else "",
             }),
         )
-        save_history(items)
+        try:
+            save_history(items)
+        except OSError as exc:
+            self.append_status(self.t("history_save_failed").format(error=exc))
+            return
         self.refresh_history()
+
+    def report_history_load_status(self, result: HistoryLoadResult) -> None:
+        if result.status == HistoryLoadStatus.RECOVERED_CORRUPT and result.backup_path is not None:
+            self.append_status(
+                self.t("history_recovered_corrupt").format(backup_path=result.backup_path)
+            )
+        elif result.status == HistoryLoadStatus.READ_ERROR:
+            self.append_status(self.t("history_read_error"))
+        elif result.status == HistoryLoadStatus.RECOVERY_FAILED:
+            self.append_status(self.t("history_recovery_failed"))
 
     def refresh_history(self) -> None:
         if not hasattr(self, "history_list"):
             return
+        result = load_history_result()
+        self.report_history_load_status(result)
+        if not result.safe_to_write:
+            return
         self.history_list.clear()
-        for item in load_history()[:50]:
+        for item in result.items[:50]:
             paths = item.get("paths") or []
             path = paths[0] if paths else ""
             time_range = history_time_range(item)
@@ -2881,7 +2925,15 @@ class MainWindow(QMainWindow):
             self.history_list.addItem(row)
 
     def clear_history(self) -> None:
-        save_history([])
+        result = load_history_result()
+        self.report_history_load_status(result)
+        if not result.safe_to_write:
+            return
+        try:
+            save_history([])
+        except OSError as exc:
+            self.append_status(self.t("history_save_failed").format(error=exc))
+            return
         self.refresh_history()
         self.append_status(self.t("history_cleared"))
 

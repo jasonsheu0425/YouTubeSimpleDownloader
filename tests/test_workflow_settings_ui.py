@@ -319,7 +319,7 @@ def test_start_download_passes_internal_mode_and_cover_value_to_worker(
         monkeypatch.setattr(window, "selected_output_dir_or_warn", lambda: tmp_path)
         monkeypatch.setattr(window, "video_info_for_start", lambda _url, _output, _time_range=None: info)
         monkeypatch.setattr(window, "ask_file_exists_action", lambda _info, _mode: "number")
-        monkeypatch.setattr(app_module, "history_downloads_by_video_id", lambda: {})
+        monkeypatch.setattr(app_module, "history_downloads_by_video_id", lambda *_args: {})
         monkeypatch.setattr(app_module.DownloadWorker, "start", lambda _worker: None)
 
         window.start_download()
@@ -500,7 +500,7 @@ def test_start_download_passes_trim_range_to_worker(
         monkeypatch.setattr(window, "selected_output_dir_or_warn", lambda: tmp_path)
         monkeypatch.setattr(window, "video_info_for_start", lambda _url, _output, _time_range=None: info)
         monkeypatch.setattr(window, "ask_file_exists_action", lambda _info, _mode: "number")
-        monkeypatch.setattr(app_module, "history_downloads_by_video_id", lambda: {})
+        monkeypatch.setattr(app_module, "history_downloads_by_video_id", lambda *_args: {})
         monkeypatch.setattr(app_module.DownloadWorker, "start", lambda _worker: None)
 
         window.start_download()

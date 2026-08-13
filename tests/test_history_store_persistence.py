@@ -3,9 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import ytsimpledownloader.app as app_module
 import ytsimpledownloader.history_store as history_store
-from ytsimpledownloader.history_store import load_history, save_history
+from ytsimpledownloader.history_store import (
+    HistoryLoadStatus,
+    load_history,
+    load_history_result,
+    save_history,
+)
 
 
 def test_missing_history_file_returns_empty_list(tmp_path: Path) -> None:
@@ -366,3 +373,234 @@ def test_missing_parent_is_not_created(tmp_path: Path) -> None:
         raise AssertionError("Expected missing parent to fail")
 
     assert path.parent.exists() is False
+
+
+def _corrupt_backups(path: Path) -> list[Path]:
+    return list(path.parent.glob(f"{path.name}.corrupt-*.bak"))
+
+
+def test_rich_load_reports_missing_without_creating_history(tmp_path: Path) -> None:
+    path = tmp_path / "history.json"
+
+    result = load_history_result(path)
+
+    assert result.status == HistoryLoadStatus.MISSING
+    assert result.items == []
+    assert result.path == path
+    assert result.backup_path is None
+    assert result.safe_to_write is True
+    assert path.exists() is False
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        [{"title": "Legacy"}],
+        [{"title": "Null paths", "paths": None}],
+        [{"title": "Paths", "paths": ["first.mp3", "second.mp4"]}],
+    ],
+)
+def test_rich_load_accepts_compatible_history_shapes(tmp_path: Path, records: list[dict]) -> None:
+    path = tmp_path / "history.json"
+    path.write_text(json.dumps(records), encoding="utf-8")
+
+    result = load_history_result(path)
+
+    assert result.status == HistoryLoadStatus.OK
+    assert result.items == records
+    assert result.safe_to_write is True
+    assert result.backup_path is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (b"", "empty_file"),
+        (b"not json", "invalid_json"),
+        (b'[{"title": "truncated"}', "invalid_json"),
+        (b"\xff\xfe", "invalid_utf8"),
+        (b'{"title": "wrong root"}', "invalid_root"),
+        (b'["not a record"]', "invalid_record"),
+        (b'[{"title": "valid"}, 2]', "invalid_record"),
+        (b'[{"paths": "not a list"}]', "invalid_paths"),
+        (b'[{"paths": ["valid.mp3", 2]}]', "invalid_paths"),
+    ],
+)
+def test_confirmed_corruption_is_moved_to_unique_backup(
+    tmp_path: Path,
+    payload: bytes,
+    reason: str,
+) -> None:
+    path = tmp_path / "history.json"
+    path.write_bytes(payload)
+
+    result = load_history_result(path)
+
+    assert result.status == HistoryLoadStatus.RECOVERED_CORRUPT
+    assert result.items == []
+    assert result.safe_to_write is True
+    assert result.corruption_reason == reason
+    assert result.backup_path is not None
+    assert result.backup_path.parent == path.parent
+    assert result.backup_path.name.startswith("history.json.corrupt-")
+    assert result.backup_path.suffix == ".bak"
+    assert result.backup_path.read_bytes() == payload
+    assert path.exists() is False
+
+
+def test_compatibility_load_is_side_effect_free_for_corrupt_history(tmp_path: Path) -> None:
+    path = tmp_path / "history.json"
+    payload = b"not json"
+    path.write_bytes(payload)
+
+    assert load_history(path) == []
+    assert path.read_bytes() == payload
+    assert _corrupt_backups(path) == []
+
+
+def test_compatibility_load_preserves_legacy_list_behavior(tmp_path: Path) -> None:
+    path = tmp_path / "history.json"
+    records = [{"title": "valid"}, "legacy non-dict value"]
+    path.write_text(json.dumps(records), encoding="utf-8")
+
+    assert load_history(path) == records
+    assert path.exists() is True
+    assert _corrupt_backups(path) == []
+
+
+def test_existing_file_that_disappears_during_read_is_not_recovered(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "history.json"
+    path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(
+        history_store.Path,
+        "read_bytes",
+        lambda _path: (_ for _ in ()).throw(FileNotFoundError("vanished")),
+    )
+
+    result = load_history_result(path)
+
+    assert result.status == HistoryLoadStatus.READ_ERROR
+    assert result.safe_to_write is False
+    assert isinstance(result.error, FileNotFoundError)
+    assert result.backup_path is None
+    assert _corrupt_backups(path) == []
+
+
+def test_permission_error_is_not_classified_as_corruption(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "history.json"
+    path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(
+        history_store.Path,
+        "read_bytes",
+        lambda _path: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+
+    result = load_history_result(path)
+
+    assert result.status == HistoryLoadStatus.READ_ERROR
+    assert result.safe_to_write is False
+    assert isinstance(result.error, PermissionError)
+    assert _corrupt_backups(path) == []
+
+
+def test_directory_path_is_read_error_and_is_not_moved(tmp_path: Path) -> None:
+    result = load_history_result(tmp_path)
+
+    assert result.status == HistoryLoadStatus.READ_ERROR
+    assert result.safe_to_write is False
+    assert tmp_path.is_dir()
+    assert result.backup_path is None
+
+
+def test_backup_reservation_failure_preserves_corrupt_history(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "history.json"
+    payload = b"not json"
+    path.write_bytes(payload)
+    monkeypatch.setattr(
+        history_store.tempfile,
+        "mkstemp",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("reserve failed")),
+    )
+
+    result = load_history_result(path)
+
+    assert result.status == HistoryLoadStatus.RECOVERY_FAILED
+    assert result.safe_to_write is False
+    assert str(result.error) == "reserve failed"
+    assert path.read_bytes() == payload
+    assert _corrupt_backups(path) == []
+
+
+def test_backup_replace_failure_preserves_original_and_cleans_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "history.json"
+    payload = b"not json"
+    path.write_bytes(payload)
+    monkeypatch.setattr(
+        history_store.os,
+        "replace",
+        lambda _source, _target: (_ for _ in ()).throw(OSError("backup replace failed")),
+    )
+
+    result = load_history_result(path)
+
+    assert result.status == HistoryLoadStatus.RECOVERY_FAILED
+    assert result.safe_to_write is False
+    assert str(result.error) == "backup replace failed"
+    assert path.read_bytes() == payload
+    assert _corrupt_backups(path) == []
+
+
+def test_backup_cleanup_failure_does_not_hide_replace_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "history.json"
+    payload = b"not json"
+    path.write_bytes(payload)
+    monkeypatch.setattr(
+        history_store.os,
+        "replace",
+        lambda _source, _target: (_ for _ in ()).throw(OSError("backup replace failed")),
+    )
+    monkeypatch.setattr(
+        history_store.Path,
+        "unlink",
+        lambda _path: (_ for _ in ()).throw(OSError("cleanup failed")),
+    )
+
+    result = load_history_result(path)
+
+    assert result.status == HistoryLoadStatus.RECOVERY_FAILED
+    assert str(result.error) == "backup replace failed"
+    assert path.read_bytes() == payload
+    leftovers = _corrupt_backups(path)
+    assert len(leftovers) == 1
+    monkeypatch.undo()
+    leftovers[0].unlink()
+
+
+def test_app_rich_load_wrapper_uses_monkeypatched_history_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "app-history.json"
+    path.write_text('[{"title": "Isolated"}]', encoding="utf-8")
+    monkeypatch.setattr(app_module, "HISTORY_PATH", path)
+
+    result = app_module.load_history_result()
+
+    assert result.status == HistoryLoadStatus.OK
+    assert result.items == [{"title": "Isolated"}]
+    assert result.path == path
