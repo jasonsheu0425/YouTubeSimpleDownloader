@@ -1,3 +1,19 @@
+# YouTube Simple Downloader v0.10.1.1
+
+## v0.10.1.1 - Desktop Shortcut Hotfix
+
+### Fixed
+
+- Fixed `IPersistFile::Save failed; code 0x80070005` / Access Denied errors that could occur when selecting **Create a desktop shortcut** on some Windows systems.
+- Desktop shortcuts are now created on the current user's Desktop instead of the Public Desktop.
+- The installer remains a per-user installation and does not require administrator privileges.
+
+### Compatibility
+
+- No changes to downloading, history, settings, FFmpeg, or yt-dlp.
+- The update checker supports four-segment hotfix versions such as `0.10.1.1`, so later releases such as `v0.10.2` are detected correctly.
+- Existing v0.10.1 user data is unchanged.
+
 # YouTube Simple Downloader v0.10.1
 
 ## v0.10.1 - App Slimming Maintenance

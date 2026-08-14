@@ -1,6 +1,6 @@
 ﻿#define MyAppName "YouTube Simple Downloader"
 #define MyAppExeName "YouTubeSimpleDownloader.exe"
-#define MyAppVersion "0.10.1"
+#define MyAppVersion "0.10.1.1"
 #define MyAppPublisher "Jason Test Signing"
 #define MyProjectDir ".."
 
@@ -19,7 +19,7 @@ DisableProgramGroupPage=no
 LicenseFile={#MyProjectDir}\installer\LICENSE.txt
 InfoAfterFile={#MyProjectDir}\installer\README-INSTALLER.txt
 OutputDir={#MyProjectDir}\release
-OutputBaseFilename=YouTubeSimpleDownloader_Setup_v0.10.1-inno-self-signed
+OutputBaseFilename=YouTubeSimpleDownloader_Setup_v0.10.1.1-inno-self-signed
 SetupIconFile={#MyProjectDir}\src\ytsimpledownloader\assets\app_icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
