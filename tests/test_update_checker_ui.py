@@ -15,8 +15,22 @@ from ytsimpledownloader import __version__
 
 
 def next_patch_version(version: str) -> str:
-    major, minor, patch = (int(part) for part in version.split("."))
-    return f"{major}.{minor}.{patch + 1}"
+    parts = version.split(".")
+    if len(parts) < 3 or any(not part.isdecimal() for part in parts):
+        raise ValueError("version must contain at least three numeric release segments")
+    parts[-1] = str(int(parts[-1]) + 1)
+    return ".".join(parts)
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("0.10.1", "0.10.2"),
+        ("0.10.1.1", "0.10.1.2"),
+    ],
+)
+def test_next_patch_version_increments_final_release_segment(version, expected) -> None:
+    assert next_patch_version(version) == expected
 
 
 LATEST_VERSION = next_patch_version(__version__)
