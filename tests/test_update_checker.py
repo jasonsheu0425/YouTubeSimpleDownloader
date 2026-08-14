@@ -34,17 +34,42 @@ def release_payload(**overrides) -> dict:
         ("0.9.7", (0, 9, 7)),
         ("v0.9.7", (0, 9, 7)),
         ("v0.9.7-security-fix", (0, 9, 7)),
+        ("0.10.1.1", (0, 10, 1, 1)),
+        ("v0.10.1.1", (0, 10, 1, 1)),
+        ("1.2.3.4.5", (1, 2, 3, 4, 5)),
+        ("v0.10.1.1-security-fix", (0, 10, 1, 1)),
+        ("0.10.1.0", (0, 10, 1)),
         ("not-a-version", None),
+        ("0.10", None),
+        ("0.10.x", None),
+        ("0..10.1", None),
+        (".10.1", None),
+        ("", None),
+        (None, None),
     ],
 )
 def test_parse_version_tag(value, expected) -> None:
     assert parse_version_tag(value) == expected
 
 
-def test_numeric_version_comparison_handles_two_digit_patch() -> None:
-    assert is_newer_version("0.9.10", "0.9.7") is True
-    assert is_newer_version("0.9.7", "0.9.7") is False
-    assert is_newer_version("0.9.6", "0.9.7") is False
+@pytest.mark.parametrize(
+    ("candidate", "current", "expected"),
+    [
+        ("0.9.10", "0.9.7", True),
+        ("0.9.7", "0.9.7", False),
+        ("0.9.6", "0.9.7", False),
+        ("0.10.1.1", "0.10.1", True),
+        ("0.10.1", "0.10.1.1", False),
+        ("0.10.2", "0.10.1.1", True),
+        ("0.10.1.1", "0.10.2", False),
+        ("0.10.1.0", "0.10.1", False),
+        ("0.10.1", "0.10.1.0", False),
+        ("0.11.0", "0.10.2", True),
+        ("1.2.3.5", "1.2.3.4", True),
+    ],
+)
+def test_numeric_version_comparison_handles_release_segments(candidate, current, expected) -> None:
+    assert is_newer_version(candidate, current) is expected
 
 
 @pytest.mark.parametrize(
@@ -68,6 +93,23 @@ def test_valid_new_release_is_parsed_from_json() -> None:
     assert update.current_version == "0.9.6"
     assert update.latest_version == "0.9.7"
     assert update.release_url == RELEASE_URL
+
+
+def test_four_segment_current_version_accepts_newer_release() -> None:
+    update = parse_latest_release_response(
+        release_payload(tag_name="v0.10.2"),
+        "0.10.1.1",
+    )
+    assert update is not None
+    assert update.current_version == "0.10.1.1"
+    assert update.latest_version == "0.10.2"
+
+
+def test_four_segment_current_version_ignores_equal_release() -> None:
+    assert parse_latest_release_response(
+        release_payload(tag_name="v0.10.1.1"),
+        "0.10.1.1",
+    ) is None
 
 
 @pytest.mark.parametrize("payload", ["{bad json", b"\xff", [], None])

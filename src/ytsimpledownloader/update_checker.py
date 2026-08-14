@@ -13,7 +13,7 @@ GITHUB_LATEST_RELEASE_API_URL = (
 )
 UPDATE_CHECK_INTERVAL = timedelta(hours=24)
 _VERSION_PATTERN = re.compile(
-    r"^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$",
+    r"^v?(\d+(?:\.\d+){2,})(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$",
     re.IGNORECASE,
 )
 _RELEASE_PATH_PREFIX = "/jasonsheu0425/youtubesimpledownloader/releases/tag/"
@@ -26,13 +26,16 @@ class UpdateInfo:
     release_url: str
 
 
-def parse_version_tag(value: object) -> tuple[int, int, int] | None:
+def parse_version_tag(value: object) -> tuple[int, ...] | None:
     if not isinstance(value, str):
         return None
     match = _VERSION_PATTERN.fullmatch(value.strip())
     if match is None:
         return None
-    return tuple(int(part) for part in match.groups())
+    parts = tuple(int(part) for part in match.group(1).split("."))
+    while len(parts) > 1 and parts[-1] == 0:
+        parts = parts[:-1]
+    return parts
 
 
 def is_newer_version(candidate_version: object, current_version: object) -> bool:
