@@ -3,8 +3,8 @@ name: YouTube Upstream Metadata Smoke
 on:
   workflow_dispatch:
     inputs:
-      target_url:
-        description: Optional public YouTube single-video URL override
+      video_id:
+        description: Optional public YouTube video ID override
         required: false
         type: string
   schedule:
@@ -18,8 +18,6 @@ jobs:
     name: YouTube upstream metadata
     runs-on: windows-latest
     timeout-minutes: 10
-    env:
-      YOUTUBE_UPSTREAM_SMOKE_TARGET: ${{ inputs.target_url || vars.YOUTUBE_UPSTREAM_SMOKE_URL }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -37,4 +35,6 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-dev.txt
           python -m pip install -e .
       - name: Extract public video metadata
+        env:
+          YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID: ${{ inputs.video_id || vars.YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID }}
         run: python scripts/youtube_upstream_smoke.py

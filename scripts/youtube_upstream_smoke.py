@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import sys
 import time
 from typing import Any
@@ -27,6 +28,7 @@ RETRY_DELAY_SECONDS = 5
 CONFIGURATION_ERROR_EXIT = 2
 RUNTIME_ERROR_EXIT = 3
 EXTRACTION_ERROR_EXIT = 1
+VIDEO_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 
 
 class SilentYtDlpLogger:
@@ -50,8 +52,14 @@ class SmokeResult:
     classification: DownloadErrorInfo | None = None
 
 
-def resolve_target(value: str | None) -> str:
-    return (value or "").strip()
+def validate_video_id(value: str | None) -> str:
+    if not isinstance(value, str) or not VIDEO_ID_PATTERN.fullmatch(value):
+        raise ValueError("A YouTube video ID must contain exactly 11 URL-safe characters.")
+    return value
+
+
+def canonical_watch_url(video_id: str) -> str:
+    return f"https://www.youtube.com/watch?v={video_id}"
 
 
 def build_metadata_options(diagnostics: YtDlpRuntimeDiagnostics) -> dict[str, Any]:
@@ -82,19 +90,19 @@ def validate_metadata_shape(metadata: object) -> bool:
 
 
 def run_smoke(
-    target_value: str | None,
+    video_id_value: str | None,
     *,
     diagnostics_factory=collect_runtime_diagnostics,
     ydl_factory=YoutubeDL,
     sleep=time.sleep,
     retry_delay_seconds: float = RETRY_DELAY_SECONDS,
 ) -> SmokeResult:
-    target = resolve_target(target_value)
-    if not target:
+    if not video_id_value:
         return SmokeResult(CONFIGURATION_ERROR_EXIT, "CONFIGURATION_ERROR", False, 0)
 
     try:
-        clean_target = validate_youtube_url(target)
+        video_id = validate_video_id(video_id_value)
+        clean_target = validate_youtube_url(canonical_watch_url(video_id))
     except ValueError:
         return SmokeResult(CONFIGURATION_ERROR_EXIT, "CONFIGURATION_ERROR", True, 0)
 
@@ -153,7 +161,7 @@ def write_summary(result: SmokeResult, summary_path: str | None = None) -> None:
 
 
 def main() -> int:
-    result = run_smoke(os.environ.get("YOUTUBE_UPSTREAM_SMOKE_TARGET"))
+    result = run_smoke(os.environ.get("YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID"))
     print(summary_text(result), end="")
     write_summary(result)
     return result.exit_code
