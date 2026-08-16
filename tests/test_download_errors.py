@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 from pathlib import Path
+from urllib.error import URLError
 
 import pytest
 from yt_dlp.utils import DownloadError, ExtractorError, GeoRestrictedError, PostProcessingError, UnsupportedError
@@ -68,6 +69,15 @@ def test_extractor_error_uses_a_typed_preserved_cause_before_the_generic_extract
     assert classify_download_error(error) == DownloadErrorInfo(DownloadErrorKind.TIMEOUT, "error_network")
 
 
+def test_raising_cause_accessor_safely_falls_back_to_unknown() -> None:
+    class BrokenCause(Exception):
+        @property
+        def cause(self):
+            raise RuntimeError("cause accessor failed")
+
+    assert classify_download_error(BrokenCause("original error")) == DownloadErrorInfo(DownloadErrorKind.UNKNOWN)
+
+
 @pytest.mark.parametrize(
     "exc_info",
     [
@@ -87,6 +97,8 @@ def test_unusable_or_unknown_wrapped_exception_info_falls_back_without_crashing(
     ("exc", "expected"),
     [
         (TimeoutError("timed out"), DownloadErrorInfo(DownloadErrorKind.TIMEOUT, "error_network")),
+        (ConnectionError("connection failed"), DownloadErrorInfo(DownloadErrorKind.NETWORK, "error_network")),
+        (URLError("connection failed"), DownloadErrorInfo(DownloadErrorKind.NETWORK, "error_network")),
         (PermissionError("access denied"), DownloadErrorInfo(DownloadErrorKind.FILESYSTEM, "error_permission")),
         (OSError(errno.ENOSPC, "disk full"), DownloadErrorInfo(DownloadErrorKind.FILESYSTEM)),
         (OSError("unspecified failure"), DownloadErrorInfo(DownloadErrorKind.UNKNOWN)),

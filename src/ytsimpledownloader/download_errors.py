@@ -108,16 +108,27 @@ def _preserved_cause(exc: BaseException) -> BaseException | None:
     """
 
     if isinstance(exc, DownloadError):
-        exc_info = getattr(exc, "exc_info", None)
+        exc_info = _safe_getattr(exc, "exc_info")
         if isinstance(exc_info, tuple) and len(exc_info) == 3 and isinstance(exc_info[1], BaseException):
             return exc_info[1]
 
-    cause = getattr(exc, "cause", None)
+    cause = _safe_getattr(exc, "cause")
     if isinstance(cause, BaseException):
         return cause
-    if isinstance(exc.__cause__, BaseException):
-        return exc.__cause__
+    chained_cause = _safe_getattr(exc, "__cause__")
+    if isinstance(chained_cause, BaseException):
+        return chained_cause
+    chained_context = _safe_getattr(exc, "__context__")
+    if isinstance(chained_context, BaseException):
+        return chained_context
     return None
+
+
+def _safe_getattr(exc: BaseException, name: str) -> object | None:
+    try:
+        return getattr(exc, name, None)
+    except Exception:
+        return None
 
 
 def _classify_narrow_message(message: str) -> DownloadErrorInfo:
