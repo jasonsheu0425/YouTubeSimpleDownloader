@@ -255,12 +255,15 @@ def test_summary_writes_when_available_and_local_execution_without_summary_is_sa
     smoke.write_summary(result)
 
 
-def test_workflow_accepts_only_a_video_id_configuration_surface() -> None:
+def test_workflow_is_manual_only_with_no_target_configuration_surface() -> None:
     workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "youtube-upstream-smoke.yml").read_text(
         encoding="utf-8"
     )
 
     assert "workflow_dispatch:" in workflow
+    assert "schedule:" not in workflow
+    for trigger in ("push:", "pull_request:", "workflow_run:", "repository_dispatch:", "release:"):
+        assert trigger not in workflow
     assert "inputs:" not in workflow
     assert "secrets." + "YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID" in workflow
     assert "https://www.youtube.com" not in workflow
