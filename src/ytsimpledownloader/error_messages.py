@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .download_errors import DownloadErrorInfo
 from .ui_text import TEXT
 
 
@@ -73,3 +74,9 @@ def friendly_error(message: str, language: str, category: str = "") -> str:
     if key:
         return TEXT[language][key]
     return message
+
+
+def friendly_download_error(error: DownloadErrorInfo, language: str) -> str:
+    if error.message_key:
+        return TEXT[language][error.message_key]
+    return TEXT[language]["error"]

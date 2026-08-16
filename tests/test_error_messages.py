@@ -4,6 +4,7 @@ import pytest
 
 import ytsimpledownloader.app as app_module
 import ytsimpledownloader.error_messages as error_messages
+from ytsimpledownloader.download_errors import DownloadErrorInfo, DownloadErrorKind
 from ytsimpledownloader.ui_text import TEXT
 
 
@@ -42,6 +43,16 @@ def test_unknown_and_empty_messages_are_returned_unchanged() -> None:
     assert error_messages.error_key("unexpected failure") == ""
     assert error_messages.friendly_error("unexpected failure", "en") == "unexpected failure"
     assert error_messages.friendly_error("", "zh") == ""
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_friendly_download_error_uses_existing_or_generic_text(language: str) -> None:
+    assert error_messages.friendly_download_error(
+        DownloadErrorInfo(DownloadErrorKind.TIMEOUT, "error_network"), language
+    ) == TEXT[language]["error_network"]
+    assert error_messages.friendly_download_error(DownloadErrorInfo(DownloadErrorKind.UNKNOWN), language) == TEXT[
+        language
+    ]["error"]
 
 
 def test_none_keeps_existing_invalid_input_behavior() -> None:

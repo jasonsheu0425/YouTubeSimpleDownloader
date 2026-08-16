@@ -9,6 +9,7 @@ import pytest
 import ytsimpledownloader.app as app_module
 from ytsimpledownloader import media_probe
 from ytsimpledownloader.downloader import OutputOptions, SingleVideoDownloader, VideoInfo
+from ytsimpledownloader.download_errors import DownloadErrorInfo, DownloadErrorKind
 from ytsimpledownloader.network_security import (
     MAX_THUMBNAIL_BYTES,
     SafeThumbnailRedirectHandler,
@@ -255,8 +256,7 @@ def test_queue_build_reports_invalid_url_without_dropping_valid_items(
 
     tasks, errors = completed[0]
     assert [task.url for task in tasks] == ["https://www.youtube.com/watch?v=jNQXAC9IVRw"]
-    assert len(errors) == 1
-    assert "Unsupported YouTube host" in errors[0]
+    assert errors == [DownloadErrorInfo(DownloadErrorKind.INVALID_INPUT, "error_unsupported")]
 
 
 def test_path_ffprobe_is_never_selected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

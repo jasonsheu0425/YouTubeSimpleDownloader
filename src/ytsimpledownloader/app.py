@@ -49,7 +49,13 @@ from .downloader import (
     extract_video_id,
     is_playlist_url,
 )
-from .error_messages import error_key, friendly_error
+from .download_errors import (
+    DownloadErrorInfo,
+    DownloadErrorKind,
+    cancelled_download_error,
+    classify_download_error,
+)
+from .error_messages import error_key, friendly_download_error, friendly_error
 from .history_store import (
     HISTORY_SCHEMA_VERSION,
     HistoryLoadResult,
@@ -107,7 +113,7 @@ SUPPORTED_LOCAL_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
 
 class PreviewWorker(QThread):
     finished_ok = Signal(object, bytes)
-    failed = Signal(str)
+    failed = Signal(object)
 
     def __init__(
         self,
@@ -146,7 +152,7 @@ class PreviewWorker(QThread):
                 except Exception:
                     thumbnail = b""
         except Exception as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(classify_download_error(exc))
         else:
             self.finished_ok.emit(info, thumbnail)
 
@@ -168,14 +174,14 @@ class QueueBuildWorker(QThread):
             try:
                 url = validate_youtube_url(url)
             except ValueError as exc:
-                errors.append(f"{url}: {exc}")
+                errors.append(classify_download_error(exc))
                 continue
             if is_playlist_url(url):
                 self.status.emit(f"Reading playlist: {url}")
                 try:
                     playlist = downloader.fetch_playlist_info(url)
                 except Exception as exc:
-                    errors.append(f"{url}: {exc}")
+                    errors.append(classify_download_error(exc))
                     continue
                 tasks.extend(
                     QueueTask(
@@ -194,9 +200,9 @@ class QueueBuildWorker(QThread):
 
 class DownloadWorker(QThread):
     status = Signal(str)
-    task_updated = Signal(int, str, str, str, int, str)
+    task_updated = Signal(int, str, str, object, int, str)
     finished_ok = Signal(list)
-    failed = Signal(str)
+    failed = Signal(object)
 
     def __init__(
         self,
@@ -285,26 +291,26 @@ class DownloadWorker(QThread):
                     try:
                         playlist = downloader.fetch_playlist_info(url)
                     except Exception as exc:
-                        error_message = str(exc)
-                        error_category = error_key(error_message)
+                        error_info = classify_download_error(exc)
                         self.task_updated.emit(
                             queue_index,
                             "failed",
                             task.title or url,
-                            error_message,
+                            error_info,
                             task.attempts,
-                            error_category,
+                            error_info.message_key or "",
                         )
                         entries.append(
                             {
                                 "index": source_index,
                                 "url": url,
                                 "title": url,
-                                "error": error_message,
+                                "error": "",
+                                "error_info": error_info,
                                 "results": [],
                             }
                         )
-                        self.status.emit(f"{self.batch_failed_label}: {url} - {exc}")
+                        self.status.emit(f"{self.batch_failed_label}: {url}")
                     else:
                         task_items.extend(
                             QueueTask(
@@ -403,11 +409,10 @@ class DownloadWorker(QThread):
                     except DownloadCancelled:
                         raise
                     except Exception as exc:
-                        error_message = str(exc)
-                        error_category = error_key(error_message)
-                        task.last_error = error_message
-                        task.error = error_message
-                        task.friendly_error = error_category
+                        error_info = classify_download_error(exc)
+                        task.last_error = error_info.kind.value
+                        task.error = error_info.kind.value
+                        task.friendly_error = error_info.message_key or ""
                         if task.attempts <= task.max_retries:
                             self.status.emit(
                                 self.retry_attempt_template.format(
@@ -420,9 +425,9 @@ class DownloadWorker(QThread):
                                 queue_index,
                                 "downloading",
                                 task.title or url,
-                                error_message,
+                                error_info,
                                 task.attempts,
-                                error_category,
+                                error_info.message_key or "",
                             )
                             continue
 
@@ -430,20 +435,21 @@ class DownloadWorker(QThread):
                             queue_index,
                             "failed",
                             task.title or url,
-                            error_message,
+                            error_info,
                             task.attempts,
-                            error_category,
+                            error_info.message_key or "",
                         )
                         entries.append(
                             {
                                 "index": index,
                                 "url": url,
                                 "title": task.title or url,
-                                "error": error_message,
+                                "error": "",
+                                "error_info": error_info,
                                 "results": [],
                             }
                         )
-                        self.status.emit(f"{self.batch_failed_label}: {url} - {exc}")
+                        self.status.emit(f"{self.batch_failed_label}: {url}")
                         break
                     else:
                         entries.append(
@@ -461,10 +467,10 @@ class DownloadWorker(QThread):
                         break
             if history_skipped_count:
                 self.status.emit(self.playlist_skip_summary_template.format(skipped=history_skipped_count))
-        except DownloadCancelled as exc:
-            self.failed.emit(str(exc))
+        except DownloadCancelled:
+            self.failed.emit(cancelled_download_error())
         except Exception as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(classify_download_error(exc))
         else:
             self.finished_ok.emit(entries)
 
@@ -2187,9 +2193,13 @@ class MainWindow(QMainWindow):
             self.thumbnail_label.setText(self.t("no_thumbnail"))
         self.append_status(self.t("info_loaded"))
 
-    def preview_failed(self, message: str) -> None:
+    def preview_failed(self, error: DownloadErrorInfo | str) -> None:
         self.clear_preview()
-        self.append_status(f"{self.t('preview_error')}: {friendly_error(message, self.language)}")
+        if isinstance(error, DownloadErrorInfo):
+            message = friendly_download_error(error, self.language)
+        else:
+            message = friendly_error(error, self.language)
+        self.append_status(f"{self.t('preview_error')}: {message}")
 
     def clear_preview(self) -> None:
         self.thumbnail_label.clear()
@@ -2270,7 +2280,13 @@ class MainWindow(QMainWindow):
             if task.attempts:
                 label += f" ({task.attempts}/{task.max_retries + 1})"
             if task.last_error or task.error:
-                label += f" - {friendly_error(task.last_error or task.error, self.language, task.friendly_error)}"
+                if task.friendly_error:
+                    error_text = friendly_error(task.last_error or task.error, self.language, task.friendly_error)
+                elif task.error in {kind.value for kind in DownloadErrorKind}:
+                    error_text = self.t("error")
+                else:
+                    error_text = friendly_error(task.last_error or task.error, self.language)
+                label += f" - {error_text}"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, index - 1)
             self.queue_list.addItem(item)
@@ -2359,7 +2375,7 @@ class MainWindow(QMainWindow):
         self.queue_worker.finished.connect(self.queue_build_cleanup)
         self.queue_worker.start()
 
-    def queue_build_finished(self, tasks: list[QueueTask], errors: list[str]) -> None:
+    def queue_build_finished(self, tasks: list[QueueTask], errors: list[DownloadErrorInfo | str]) -> None:
         existing_keys = {queue_task_key(task.url) for task in self.download_queue}
         new_tasks = []
         for task in tasks:
@@ -2372,7 +2388,8 @@ class MainWindow(QMainWindow):
         if new_tasks:
             self.append_status(self.t("queue_added").format(count=len(new_tasks)))
         for error in errors:
-            self.append_status(f"{self.t('queue_item_failed')}: {friendly_error(error, self.language)}")
+            message = friendly_download_error(error, self.language) if isinstance(error, DownloadErrorInfo) else friendly_error(error, self.language)
+            self.append_status(f"{self.t('queue_item_failed')}: {message}")
         self.refresh_queue()
 
     def queue_build_cleanup(self) -> None:
@@ -2386,7 +2403,7 @@ class MainWindow(QMainWindow):
         index: int,
         status: str,
         title: str,
-        error: str,
+        error: DownloadErrorInfo | str,
         attempts: int,
         friendly_error_key: str,
     ) -> None:
@@ -2396,9 +2413,14 @@ class MainWindow(QMainWindow):
         task.status = status
         if title:
             task.title = title
-        task.error = error
-        task.last_error = error
-        task.friendly_error = friendly_error_key
+        if isinstance(error, DownloadErrorInfo):
+            task.error = error.kind.value
+            task.last_error = error.kind.value
+            task.friendly_error = error.message_key or ""
+        else:
+            task.error = error
+            task.last_error = error
+            task.friendly_error = friendly_error_key
         task.attempts = attempts
         self.refresh_queue()
 
@@ -2588,7 +2610,11 @@ class MainWindow(QMainWindow):
                 time_range=time_range,
             ).fetch_video_info(url)
         except Exception as exc:
-            QMessageBox.warning(self, self.t("cannot_read_title"), friendly_error(str(exc), self.language))
+            QMessageBox.warning(
+                self,
+                self.t("cannot_read_title"),
+                friendly_download_error(classify_download_error(exc), self.language),
+            )
             return None
         finally:
             QApplication.restoreOverrideCursor()
@@ -2730,12 +2756,18 @@ class MainWindow(QMainWindow):
         for entry in entries:
             title = entry.get("title") or entry.get("url") or ""
             error = entry.get("error") or ""
+            error_info = entry.get("error_info")
             time_range = entry.get("time_range")
             display_time_range = time_range if isinstance(time_range, TimeRange) else None
             trim_template = self.t("trim_range_display") if display_time_range is not None else ""
-            if error:
+            if error or isinstance(error_info, DownloadErrorInfo):
                 failed_count += 1
-                label = f"{entry.get('index', '')}. {self.t('batch_item_failed')}: {title} - {friendly_error(error, self.language)}"
+                message = (
+                    friendly_download_error(error_info, self.language)
+                    if isinstance(error_info, DownloadErrorInfo)
+                    else friendly_error(error, self.language)
+                )
+                label = f"{entry.get('index', '')}. {self.t('batch_item_failed')}: {title} - {message}"
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, "")
                 self.result_list.addItem(item)
@@ -2784,8 +2816,12 @@ class MainWindow(QMainWindow):
             QApplication.beep()
             QMessageBox.information(self, self.t("download_completed"), self.t("download_completed_msg"))
 
-    def download_failed(self, message: str) -> None:
-        if "cancelled" in message.lower() or "canceled" in message.lower():
+    def download_failed(self, error: DownloadErrorInfo | str) -> None:
+        is_structured = isinstance(error, DownloadErrorInfo)
+        is_cancelled = is_structured and error.kind is DownloadErrorKind.CANCELLED
+        if not is_structured and ("cancelled" in error.lower() or "canceled" in error.lower()):
+            is_cancelled = True
+        if is_cancelled:
             for task in self.download_queue:
                 if task.status in ("waiting", "downloading"):
                     task.status = "canceled"
@@ -2795,9 +2831,12 @@ class MainWindow(QMainWindow):
             self.set_running(False)
             return
 
-        friendly = friendly_error(message, self.language)
-        if friendly == message:
-            friendly = friendly_transcode_error(message)
+        if is_structured:
+            friendly = friendly_download_error(error, self.language)
+        else:
+            friendly = friendly_error(error, self.language)
+            if friendly == error:
+                friendly = friendly_transcode_error(error)
         self.append_status(f"{self.t('error')}: {friendly}")
         self.set_running(False)
 
