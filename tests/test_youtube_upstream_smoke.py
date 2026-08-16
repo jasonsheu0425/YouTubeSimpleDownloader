@@ -109,6 +109,27 @@ def test_successful_metadata_extraction_is_download_free_uses_runtime_options_an
     assert options["remote_components"] == ["ejs:github"]
 
 
+def test_diagnostic_logger_uses_a_narrow_player_challenge_code_without_storing_raw_text() -> None:
+    logger = smoke.SmokeDiagnosticLogger()
+    sensitive_message = (
+        "Failed to load player for JS challenge: "
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw&token=secret C:\\Users\\jason\\private.mp4"
+    )
+
+    logger.error(sensitive_message)
+
+    assert logger.code is smoke.SmokeDiagnosticCode.PLAYER_CHALLENGE
+    assert logger.__dict__ == {"code": smoke.SmokeDiagnosticCode.PLAYER_CHALLENGE}
+
+
+def test_diagnostic_logger_uses_none_for_unrecognized_messages() -> None:
+    logger = smoke.SmokeDiagnosticLogger()
+
+    logger.warning("Synthetic extractor warning")
+
+    assert logger.code is smoke.SmokeDiagnosticCode.NONE
+
+
 def test_invalid_metadata_shape_fails_without_retaining_metadata() -> None:
     for metadata in (valid_metadata(id=""), valid_metadata(title=""), valid_metadata(extractor="", extractor_key="")):
         result = run([metadata])
@@ -162,6 +183,15 @@ def test_non_retryable_failures_stop_after_one_attempt_with_safe_classification(
         assert result.attempts == 1
 
 
+def test_player_challenge_diagnostic_does_not_change_extractor_retry_behavior() -> None:
+    result = run([ExtractorError("Failed to load player for JS challenge: synthetic")])
+
+    assert result.classification is not None
+    assert result.classification.kind is DownloadErrorKind.EXTRACTOR
+    assert result.diagnostic_code is smoke.SmokeDiagnosticCode.PLAYER_CHALLENGE
+    assert result.attempts == 1
+
+
 def test_url_error_is_classified_as_network_for_the_bounded_retry(monkeypatch) -> None:
     seen = []
     original_classifier = smoke.classify_download_error
@@ -192,6 +222,26 @@ def test_video_id_and_exception_details_do_not_appear_in_console_or_summary(tmp_
     assert "private.mp4" not in output
     assert VALID_VIDEO_ID not in output
     assert "Classification: UNKNOWN" in output
+    assert "Diagnostic: NONE" in output
+
+
+def test_player_challenge_diagnostic_redacts_matching_raw_details_from_console_and_summary(tmp_path: Path, capsys) -> None:
+    sensitive_message = (
+        "Failed to load player for JS challenge: "
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw&token=secret C:\\Users\\jason\\private.mp4"
+    )
+    result = run([ExtractorError(sensitive_message)])
+    summary = tmp_path / "summary.md"
+
+    print(smoke.summary_text(result), end="")
+    smoke.write_summary(result, str(summary))
+
+    output = capsys.readouterr().out + summary.read_text(encoding="utf-8")
+    assert "secret" not in output
+    assert "private.mp4" not in output
+    assert VALID_VIDEO_ID not in output
+    assert "Classification: EXTRACTOR" in output
+    assert "Diagnostic: PLAYER_CHALLENGE" in output
 
 
 def test_summary_writes_when_available_and_local_execution_without_summary_is_safe(tmp_path: Path, monkeypatch) -> None:
@@ -210,9 +260,11 @@ def test_workflow_accepts_only_a_video_id_configuration_surface() -> None:
         encoding="utf-8"
     )
 
-    assert "video_id:" in workflow
-    assert "YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "inputs:" not in workflow
+    assert "secrets." + "YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID" in workflow
     assert "https://www.youtube.com" not in workflow
+    assert "inputs." + "video_id" not in workflow
     assert "target" + "_url" not in workflow
     assert "YOUTUBE_UPSTREAM_SMOKE_" + "URL" not in workflow
     assert "YOUTUBE_UPSTREAM_SMOKE_" + "TARGET" not in workflow

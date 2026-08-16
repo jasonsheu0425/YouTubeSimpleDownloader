@@ -2,11 +2,6 @@ name: YouTube Upstream Metadata Smoke
 
 on:
   workflow_dispatch:
-    inputs:
-      video_id:
-        description: Optional public YouTube video ID override
-        required: false
-        type: string
   schedule:
     - cron: "17 3 * * 1,4"
 
@@ -36,5 +31,5 @@ jobs:
           python -m pip install -e .
       - name: Extract public video metadata
         env:
-          YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID: ${{ inputs.video_id || vars.YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID }}
+          YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID: ${{ secrets.YOUTUBE_UPSTREAM_SMOKE_VIDEO_ID }}
         run: python scripts/youtube_upstream_smoke.py

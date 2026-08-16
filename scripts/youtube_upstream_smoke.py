@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 import re
 import sys
@@ -31,15 +32,29 @@ EXTRACTION_ERROR_EXIT = 1
 VIDEO_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 
 
-class SilentYtDlpLogger:
-    def debug(self, _message: str) -> None:
-        return
+class SmokeDiagnosticCode(str, Enum):
+    NONE = "NONE"
+    PLAYER_CHALLENGE = "PLAYER_CHALLENGE"
 
-    def warning(self, _message: str) -> None:
-        return
 
-    def error(self, _message: str) -> None:
-        return
+class SmokeDiagnosticLogger:
+    _PLAYER_CHALLENGE_SIGNATURE = "Failed to load player for JS challenge:"
+
+    def __init__(self) -> None:
+        self.code = SmokeDiagnosticCode.NONE
+
+    def observe(self, message: object) -> None:
+        if isinstance(message, str) and self._PLAYER_CHALLENGE_SIGNATURE in message:
+            self.code = SmokeDiagnosticCode.PLAYER_CHALLENGE
+
+    def debug(self, message: str) -> None:
+        self.observe(message)
+
+    def warning(self, message: str) -> None:
+        self.observe(message)
+
+    def error(self, message: str) -> None:
+        self.observe(message)
 
 
 @dataclass(frozen=True)
@@ -50,6 +65,7 @@ class SmokeResult:
     attempts: int
     diagnostics: YtDlpRuntimeDiagnostics | None = None
     classification: DownloadErrorInfo | None = None
+    diagnostic_code: SmokeDiagnosticCode = SmokeDiagnosticCode.NONE
 
 
 def validate_video_id(value: str | None) -> str:
@@ -62,7 +78,10 @@ def canonical_watch_url(video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
-def build_metadata_options(diagnostics: YtDlpRuntimeDiagnostics) -> dict[str, Any]:
+def build_metadata_options(
+    diagnostics: YtDlpRuntimeDiagnostics,
+    diagnostic_logger: SmokeDiagnosticLogger,
+) -> dict[str, Any]:
     options: dict[str, Any] = {
         "skip_download": True,
         "noplaylist": True,
@@ -70,7 +89,7 @@ def build_metadata_options(diagnostics: YtDlpRuntimeDiagnostics) -> dict[str, An
         "quiet": True,
         "noprogress": True,
         "no_warnings": True,
-        "logger": SilentYtDlpLogger(),
+        "logger": diagnostic_logger,
     }
     options.update(javascript_runtime_options(diagnostics))
     return options
@@ -110,12 +129,14 @@ def run_smoke(
     if not diagnostics.node.supported:
         return SmokeResult(RUNTIME_ERROR_EXIT, "RUNTIME_FAILURE", True, 0, diagnostics)
 
-    options = build_metadata_options(diagnostics)
+    diagnostic_logger = SmokeDiagnosticLogger()
+    options = build_metadata_options(diagnostics, diagnostic_logger)
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             with ydl_factory(options) as ydl:
                 metadata = ydl.extract_info(clean_target, download=False)
         except Exception as exc:
+            diagnostic_logger.observe(str(exc))
             classification = classify_download_error(exc)
             if (
                 classification.kind in {DownloadErrorKind.NETWORK, DownloadErrorKind.TIMEOUT}
@@ -123,11 +144,26 @@ def run_smoke(
             ):
                 sleep(retry_delay_seconds)
                 continue
-            return SmokeResult(EXTRACTION_ERROR_EXIT, "EXTRACTION_FAILURE", True, attempt, diagnostics, classification)
+            return SmokeResult(
+                EXTRACTION_ERROR_EXIT,
+                "EXTRACTION_FAILURE",
+                True,
+                attempt,
+                diagnostics,
+                classification,
+                diagnostic_logger.code,
+            )
 
         if not validate_metadata_shape(metadata):
-            return SmokeResult(EXTRACTION_ERROR_EXIT, "METADATA_INVALID", True, attempt, diagnostics)
-        return SmokeResult(0, "PASS", True, attempt, diagnostics)
+            return SmokeResult(
+                EXTRACTION_ERROR_EXIT,
+                "METADATA_INVALID",
+                True,
+                attempt,
+                diagnostics,
+                diagnostic_code=diagnostic_logger.code,
+            )
+        return SmokeResult(0, "PASS", True, attempt, diagnostics, diagnostic_code=diagnostic_logger.code)
 
     raise AssertionError("The bounded smoke retry loop must return from an attempt.")
 
@@ -147,6 +183,7 @@ def summary_text(result: SmokeResult) -> str:
         lines.insert(3, f"Node: {node.version or 'unavailable'} / {node.status}")
     if result.classification is not None:
         lines.append(f"Classification: {result.classification.kind.value.upper()}")
+    lines.append(f"Diagnostic: {result.diagnostic_code.value}")
     return "\n".join(lines) + "\n"
 
 
