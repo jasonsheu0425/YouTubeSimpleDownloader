@@ -2,12 +2,12 @@
 
 A Windows desktop application for saving public YouTube videos and playlists as audio, video, or both. It is built with PySide6, yt-dlp, imageio-ffmpeg, PyInstaller, and Inno Setup.
 
-## Download the latest release
+## Release installer
 
-Download the installer from the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). The normal installer is:
+Release installers are published on the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). For version 0.10.2, the installer filename is:
 
 ```text
-YouTubeSimpleDownloader_Setup_v0.10.1-inno-self-signed.exe
+YouTubeSimpleDownloader_Setup_v0.10.2-inno-self-signed.exe
 ```
 
 The installer defaults to the per-user location below and shows the destination page on every run. It does not reuse an older install folder automatically.
@@ -47,9 +47,9 @@ Version 0.9.8 continues to bundle FFmpeg 8.1.2. This replaces the previous FFmpe
 
 Version 0.9.8 also hardens preview networking, media probing, and custom output paths. Preview and batch inputs accept only supported HTTPS YouTube URLs, thumbnail requests are bounded and restricted to trusted image hosts, arbitrary `ffprobe` executables from `PATH` are no longer used, and custom filename templates cannot escape the selected output folder.
 
-The Windows essentials build was downloaded from the provider linked by FFmpeg's official Windows download page:
+The Windows essentials build is acquired from a version-pinned FFmpeg 8.1.2 provider release asset and verified before use:
 
-- Source: `https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip`
+- Source: `https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip`
 - Download archive SHA-256: `DB580001CAA24AC104C8CB856CD113A87B0A443F7BDF47D8C12B1D740584A2EC`
 - Bundled `ffmpeg.exe` SHA-256: `1326DDE4C84FF1F96FE6B8916C5BED29E163E9B5DCCF995F6F3DB069D143EC5E`
 
@@ -72,7 +72,7 @@ The release installer is self-signed for testing and friend-to-friend sharing. W
 Verify an installer after downloading it:
 
 ```powershell
-Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.10.1-inno-self-signed.exe -Algorithm SHA256
+Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.10.2-inno-self-signed.exe -Algorithm SHA256
 ```
 
 Compare the reported hash with the value in the matching GitHub Release.
@@ -172,7 +172,7 @@ Build the self-signed Inno Setup installer after the EXE bundle is ready:
 Expected installer:
 
 ```text
-release\YouTubeSimpleDownloader_Setup_v0.10.1-inno-self-signed.exe
+release\YouTubeSimpleDownloader_Setup_v0.10.2-inno-self-signed.exe
 ```
 
 ## Contributing and security

@@ -1,3 +1,51 @@
+# YouTube Simple Downloader v0.10.2
+
+## v0.10.2 - Reliability Maintenance
+
+### Reliability
+
+- Added bounded yt-dlp and Node.js runtime diagnostics so supported, missing,
+  outdated, and unavailable runtime states are easier to distinguish.
+- Preserved yt-dlp's fallback behavior when a supported optional JavaScript
+  runtime is not available.
+
+### Download errors
+
+- Improved download error classification for network failures, unavailable
+  videos, access requirements, extractor failures, post-processing errors,
+  and filesystem failures.
+- Uncertain failures continue to use a conservative generic fallback instead
+  of guessing at a specific cause.
+
+### History safety
+
+- History writes are now safer against interruption and partial files.
+- Corrupted history files can be detected, backed up, and recovered without
+  silently overwriting unreadable data.
+- History writes remain blocked after read or recovery failures that cannot be
+  handled safely.
+
+### Upstream health
+
+- Added a manual, metadata-only YouTube compatibility canary for controlled
+  maintenance checks without downloading media.
+- Canary configuration and diagnostics avoid exposing the configured target or
+  raw upstream error details.
+
+### Installer and update compatibility
+
+- Retains the v0.10.1.1 fix that creates optional desktop shortcuts on the
+  current user's Desktop while keeping the installer per-user and non-admin.
+- Retains update comparison support for four-segment hotfix versions such as
+  `0.10.1.1`.
+
+### Internal reliability
+
+- CI now acquires the bundled FFmpeg 8.1.2 archive from a version-pinned source
+  and continues to verify both the archive and executable hashes.
+- Python validation and FFmpeg artifact verification run independently so
+  infrastructure failures have clearer results.
+
 # YouTube Simple Downloader v0.10.1
 
 ## v0.10.1 - App Slimming Maintenance
