@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import math
+import os
 from pathlib import Path
 from queue import Empty, Queue
 import subprocess
+import tempfile
 from threading import Event, Thread
 import time
 from typing import Callable, Literal, TextIO
 
 from .ffmpeg_resolver import ensure_ffmpeg_exe as resolve_ffmpeg_exe
 from .media_probe import MediaInfo, probe_media
+from .time_range import TimeRange, validate_against_duration
 
 
 ProgressCallback = Callable[[str], None]
@@ -97,6 +101,26 @@ class VideoTranscodeOptions:
             audio="remove",
             keep_original=True,
             suffix="_osu_h264",
+            pixel_format="yuv420p",
+            faststart=True,
+            no_upscale=True,
+            aspect_mode="fit",
+        )
+
+    @classmethod
+    def local_clip(cls, time_range: TimeRange) -> "VideoTranscodeOptions":
+        return cls(
+            mode="transcode",
+            container="mp4",
+            video_codec="h264",
+            resolution="original",
+            fps="original",
+            quality="custom",
+            crf=20,
+            speed="medium",
+            audio="keep",
+            keep_original=True,
+            suffix=_local_clip_suffix(time_range),
             pixel_format="yuv420p",
             faststart=True,
             no_upscale=True,
@@ -244,11 +268,16 @@ class VideoTranscoder:
         options: VideoTranscodeOptions,
         output_dir: str | Path | None = None,
         file_exists_action: FileExistsAction = "number",
+        *,
+        time_range: TimeRange | None = None,
     ) -> TranscodeResult:
         options = options.normalized()
         source = Path(source_path)
         if not source.exists():
             raise FileNotFoundError(str(source))
+        if time_range is not None:
+            self._validate_local_clip_options(options, file_exists_action)
+            options = replace(options, suffix=_local_clip_suffix(time_range))
         if options.video_codec != "copy" and not encoder_available(options.video_codec, self.ffmpeg_path):
             raise RuntimeError(f"Encoder not available: {options.video_codec}")
 
@@ -257,8 +286,15 @@ class VideoTranscoder:
             info = probe_media(output_path, self.ffmpeg_path)
             return TranscodeResult(output_path, source, info, skipped=True)
 
-        command = self.build_command(source, output_path, options)
         source_info = probe_media(source, self.ffmpeg_path)
+        if time_range is not None:
+            duration_seconds = _whole_duration_seconds(source_info.duration)
+            if duration_seconds is None:
+                raise ValueError("Local Clip requires a known positive source duration.")
+            validate_against_duration(time_range, duration_seconds)
+            return self._transcode_local_clip(source, output_path, options, time_range)
+
+        command = self.build_command(source, output_path, options)
         self._emit(f"Transcoding: {source.name}")
         stderr_tail = self._run_ffmpeg(command, source_info.duration)
         if self.cancel_event and self.cancel_event.is_set():
@@ -280,6 +316,83 @@ class VideoTranscoder:
             self._emit(f"Media info note: {info.error}")
         self._emit(f"Media info: {info.summary()}")
         return TranscodeResult(output_path, source, info)
+
+    def _transcode_local_clip(
+        self,
+        source: Path,
+        output_path: Path,
+        options: VideoTranscodeOptions,
+        time_range: TimeRange,
+    ) -> TranscodeResult:
+        partial_path = self._create_local_clip_partial_path(output_path)
+        finalized = False
+        try:
+            command = self.build_command(
+                source,
+                partial_path,
+                options,
+                time_range=time_range,
+            )
+            self._emit(f"Transcoding: {source.name}")
+            stderr_tail = self._run_ffmpeg(command, float(time_range.duration_seconds))
+            if self.cancel_event and self.cancel_event.is_set():
+                raise TranscodeCancelled("Transcode cancelled by user.")
+            if not partial_path.exists():
+                raise RuntimeError(stderr_tail or "FFmpeg did not create an output file.")
+
+            info = probe_media(partial_path, self.ffmpeg_path)
+            self._finalize_local_clip_output(partial_path, output_path)
+            finalized = True
+        finally:
+            if not finalized:
+                self._remove_owned_partial(partial_path)
+
+        self._emit(f"Transcoded: {output_path}")
+        info = replace(info, path=output_path)
+        if info.error:
+            self._emit(f"Media info note: {info.error}")
+        self._emit(f"Media info: {info.summary()}")
+        return TranscodeResult(output_path, source, info)
+
+    def _validate_local_clip_options(
+        self,
+        options: VideoTranscodeOptions,
+        file_exists_action: FileExistsAction,
+    ) -> None:
+        if options.mode != "transcode" or options.container != "mp4" or options.video_codec != "h264":
+            raise ValueError("Local Clip requires H.264 MP4 transcoding.")
+        if options.audio != "keep" or options.pixel_format != "yuv420p":
+            raise ValueError("Local Clip requires the fixed H.264/AAC MP4 profile.")
+        if not options.keep_original:
+            raise ValueError("Local Clip always preserves the source file.")
+        if file_exists_action != "number":
+            raise ValueError("Local Clip only supports numbered output paths.")
+
+    @staticmethod
+    def _create_local_clip_partial_path(output_path: Path) -> Path:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f"{output_path.stem}.partial-",
+            suffix=output_path.suffix,
+            dir=output_path.parent,
+        )
+        os.close(descriptor)
+        return Path(temporary_name)
+
+    @staticmethod
+    def _finalize_local_clip_output(partial_path: Path, output_path: Path) -> None:
+        if output_path.exists():
+            raise FileExistsError(f"Local Clip output already exists: {output_path}")
+        # On Windows, os.rename refuses to replace an existing destination.
+        os.rename(partial_path, output_path)
+
+    @staticmethod
+    def _remove_owned_partial(partial_path: Path) -> None:
+        try:
+            partial_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
     def prepare_output_path(
         self,
@@ -306,7 +419,14 @@ class VideoTranscoder:
             return target, False
         return _numbered_path(target), False
 
-    def build_command(self, source: Path, output: Path, options: VideoTranscodeOptions) -> list[str]:
+    def build_command(
+        self,
+        source: Path,
+        output: Path,
+        options: VideoTranscodeOptions,
+        *,
+        time_range: TimeRange | None = None,
+    ) -> list[str]:
         video_filters = self._video_filters(options)
         command = [
             self.ffmpeg_path,
@@ -315,6 +435,15 @@ class VideoTranscoder:
             "-i",
             str(source),
         ]
+        if time_range is not None:
+            command.extend(
+                [
+                    "-ss",
+                    str(time_range.start_seconds),
+                    "-t",
+                    str(time_range.duration_seconds),
+                ]
+            )
         if video_filters:
             command.extend(["-vf", ",".join(video_filters)])
 
@@ -326,6 +455,8 @@ class VideoTranscoder:
         if options.extra_args:
             command.extend(options.extra_args)
 
+        if time_range is not None:
+            command.extend(["-f", "mp4"])
         command.extend(["-progress", "pipe:1", "-nostats", str(output)])
         return command
 
@@ -559,6 +690,17 @@ def _numbered_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
         counter += 1
+
+
+def _local_clip_suffix(time_range: TimeRange) -> str:
+    return f"_clip_{time_range.start_seconds}s-{time_range.end_seconds}s"
+
+
+def _whole_duration_seconds(duration: float | None) -> int | None:
+    if duration is None or not math.isfinite(duration) or duration <= 0:
+        return None
+    seconds = math.floor(duration)
+    return seconds if seconds > 0 else None
 
 
 def _even(value: int) -> int:

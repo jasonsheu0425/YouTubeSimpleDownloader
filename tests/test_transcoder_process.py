@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+import ytsimpledownloader.transcoder as transcoder_module
 from ytsimpledownloader.transcoder import TranscodeCancelled, VideoTranscoder
 
 
@@ -209,3 +210,30 @@ def test_terminate_escalates_to_kill_after_grace_period() -> None:
     assert process.terminated
     assert process.killed
     assert process.wait_calls == 2
+
+
+def test_local_clip_finalization_refuses_a_late_existing_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transcoder = VideoTranscoder(sys.executable)
+    partial_path = tmp_path / "clip.partial-owned.mp4"
+    output_path = tmp_path / "clip.mp4"
+    partial_path.write_bytes(b"owned partial")
+
+    def race_rename(source: Path, destination: Path) -> None:
+        destination.write_bytes(b"user-created output")
+        raise FileExistsError("destination exists")
+
+    monkeypatch.setattr(transcoder_module.os, "rename", race_rename)
+    monkeypatch.setattr(
+        transcoder_module.os,
+        "replace",
+        lambda *_args: pytest.fail("Local Clip finalization must not use os.replace"),
+    )
+
+    with pytest.raises(FileExistsError, match="destination exists"):
+        transcoder._finalize_local_clip_output(partial_path, output_path)
+
+    assert partial_path.read_bytes() == b"owned partial"
+    assert output_path.read_bytes() == b"user-created output"
