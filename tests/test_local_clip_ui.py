@@ -372,7 +372,7 @@ def test_local_clip_malformed_history_is_nonfatal_and_failure_avoids_download_ta
         window.local_clip_failed("permission denied")
 
         assert "輸出資料夾沒有寫入權限" in window.status_box.toPlainText()
-        assert "Local Clip diagnostic: permission denied" in window.status_box.toPlainText()
+        assert "本機影片裁剪診斷：permission denied" in window.status_box.toPlainText()
         assert window.result_list.count() == 0
         assert not window._running
         history_before_cancel = app_module.HISTORY_PATH.read_text(encoding="utf-8")

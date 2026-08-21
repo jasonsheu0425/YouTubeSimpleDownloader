@@ -3249,7 +3249,7 @@ class MainWindow(QMainWindow):
             friendly = self.t("local_clip_error_failed")
 
         self.append_status(f"{self.t('error')}: {friendly}")
-        self.append_status(f"Local Clip diagnostic: {error}")
+        self.append_status(self.t("local_clip_diagnostic").format(error=error))
         self.set_running(False)
 
     def cleanup_worker(self, worker: DownloadWorker | LocalTranscodeWorker) -> None:
