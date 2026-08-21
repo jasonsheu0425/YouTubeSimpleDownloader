@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import subprocess
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -68,7 +70,7 @@ from .history_store import (
     save_history as save_history_to_path,
 )
 from .paths import DEFAULT_DOWNLOAD_DIR, PROJECT_DIR, ensure_default_dirs
-from .media_probe import probe_media
+from .media_probe import MediaInfo, probe_media
 from .network_security import fetch_thumbnail_bytes, validate_youtube_url
 from .queue_models import QueueTask, copy_queue_task
 from .result_display import (
@@ -475,6 +477,282 @@ class DownloadWorker(QThread):
             self.finished_ok.emit(entries)
 
 
+class LocalClipProbeWorker(QThread):
+    finished_ok = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, source_path: Path) -> None:
+        super().__init__()
+        self.source_path = source_path
+        self.cancel_event = Event()
+
+    def cancel(self) -> None:
+        self.cancel_event.set()
+
+    def run(self) -> None:
+        try:
+            transcoder = VideoTranscoder(cancel_event=self.cancel_event)
+            if self.cancel_event.is_set():
+                return
+            info = probe_media(self.source_path, transcoder.ffmpeg_path)
+            if self.cancel_event.is_set():
+                return
+        except Exception as exc:
+            if not self.cancel_event.is_set():
+                self.failed.emit(str(exc))
+        else:
+            self.finished_ok.emit(info)
+
+
+class LocalClipDialog(QDialog):
+    clip_requested = Signal(str, str, object)
+
+    def __init__(self, main_window: "MainWindow") -> None:
+        super().__init__(main_window)
+        self.main_window = main_window
+        self.source_path: Path | None = None
+        self.source_info: MediaInfo | None = None
+        self.duration_seconds: int | None = None
+        self.probe_worker: LocalClipProbeWorker | None = None
+        self._closed = False
+
+        self.setModal(True)
+        self.setMinimumWidth(560)
+        self.setWindowTitle(self.t("local_clip_title"))
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(9)
+
+        source_label = QLabel(self.t("local_clip_source"))
+        layout.addWidget(source_label)
+        source_row = QHBoxLayout()
+        self.source_input = QLineEdit()
+        self.source_input.setObjectName("localClipSourceInput")
+        self.source_input.setReadOnly(True)
+        self.source_button = QPushButton(self.t("local_clip_choose_source"))
+        self.source_button.clicked.connect(self.choose_source)
+        source_row.addWidget(self.source_input, 1)
+        source_row.addWidget(self.source_button)
+        layout.addLayout(source_row)
+
+        self.media_info_title_label = QLabel(self.t("local_clip_media_info"))
+        layout.addWidget(self.media_info_title_label)
+        self.media_info_label = QLabel(self.t("local_clip_select_source"))
+        self.media_info_label.setObjectName("mutedLabel")
+        self.media_info_label.setWordWrap(True)
+        layout.addWidget(self.media_info_label)
+
+        range_grid = QGridLayout()
+        range_grid.setHorizontalSpacing(9)
+        range_grid.setVerticalSpacing(5)
+        self.start_label = QLabel(self.t("local_clip_start"))
+        self.start_input = QLineEdit("00:00")
+        self.start_input.setObjectName("localClipStartInput")
+        self.end_label = QLabel(self.t("local_clip_end"))
+        self.end_input = QLineEdit()
+        self.end_input.setObjectName("localClipEndInput")
+        self.duration_label = QLabel(self.t("local_clip_duration"))
+        self.duration_value_label = QLabel("00:00")
+        range_grid.addWidget(self.start_label, 0, 0)
+        range_grid.addWidget(self.start_input, 0, 1)
+        range_grid.addWidget(self.end_label, 0, 2)
+        range_grid.addWidget(self.end_input, 0, 3)
+        range_grid.addWidget(self.duration_label, 1, 0)
+        range_grid.addWidget(self.duration_value_label, 1, 1)
+        range_grid.setColumnStretch(1, 1)
+        range_grid.setColumnStretch(3, 1)
+        layout.addLayout(range_grid)
+
+        self.range_error_label = QLabel()
+        self.range_error_label.setObjectName("mutedLabel")
+        self.range_error_label.setWordWrap(True)
+        layout.addWidget(self.range_error_label)
+
+        output_label = QLabel(self.t("local_clip_output_folder"))
+        layout.addWidget(output_label)
+        output_row = QHBoxLayout()
+        self.output_input = QLineEdit()
+        self.output_input.setObjectName("localClipOutputInput")
+        self.output_input.setReadOnly(True)
+        self.output_button = QPushButton(self.t("local_clip_choose_output"))
+        self.output_button.clicked.connect(self.choose_output_folder)
+        output_row.addWidget(self.output_input, 1)
+        output_row.addWidget(self.output_button)
+        layout.addLayout(output_row)
+
+        expected_label = QLabel(self.t("local_clip_expected_output"))
+        layout.addWidget(expected_label)
+        self.expected_output_label = QLabel()
+        self.expected_output_label.setObjectName("mutedLabel")
+        self.expected_output_label.setWordWrap(True)
+        self.expected_output_label.setMinimumWidth(0)
+        self.expected_output_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.expected_output_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.expected_output_label)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.cancel_button = QPushButton(self.t("cancel"))
+        self.cancel_button.clicked.connect(self.reject)
+        self.clip_button = QPushButton(self.t("local_clip_create"))
+        self.clip_button.setDefault(True)
+        self.clip_button.clicked.connect(self.accept_clip)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.clip_button)
+        layout.addLayout(buttons)
+
+        self.start_input.textChanged.connect(self.update_clip_state)
+        self.end_input.textChanged.connect(self.update_clip_state)
+        self.update_clip_state()
+
+    def t(self, key: str) -> str:
+        return self.main_window.t(key)
+
+    def choose_source(self) -> None:
+        file_name, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            self.t("local_clip_choose_source"),
+            str(self.source_path.parent if self.source_path else Path.home()),
+            "Videos (*.mp4 *.mkv *.webm *.mov *.avi)",
+        )
+        if file_name:
+            self.set_source_path(Path(file_name))
+
+    def set_source_path(self, source_path: str | Path) -> None:
+        source = Path(source_path)
+        self._cancel_probe()
+        if not source.is_file() or source.suffix.lower() not in SUPPORTED_LOCAL_VIDEO_SUFFIXES:
+            self.source_path = None
+            self.source_input.clear()
+            self.source_info = None
+            self.duration_seconds = None
+            self.media_info_label.setText(self.t("local_clip_select_source"))
+            self.update_clip_state()
+            return
+
+        self.source_path = source
+        self.source_input.setText(str(source))
+        self.output_input.setText(str(source.parent))
+        self.source_info = None
+        self.duration_seconds = None
+        self.media_info_label.setText(self.t("local_clip_probe_in_progress"))
+        self.update_clip_state()
+
+        worker = LocalClipProbeWorker(source)
+        self.probe_worker = worker
+        self.main_window.retain_local_clip_probe_worker(worker)
+        worker.finished_ok.connect(lambda info, probe=worker: self.probe_succeeded(probe, info))
+        worker.failed.connect(lambda error, probe=worker: self.probe_failed(probe, error))
+        worker.start()
+
+    def choose_output_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            self.t("local_clip_choose_output"),
+            self.output_input.text() or str(self.source_path.parent if self.source_path else Path.home()),
+        )
+        if folder:
+            self.output_input.setText(folder)
+            self.update_clip_state()
+
+    def requested_time_range(self) -> TimeRange:
+        if self.duration_seconds is None:
+            raise TimeRangeError(self.t("local_clip_duration_unavailable"))
+        if not self.end_input.text().strip():
+            raise TimeRangeError(self.t("local_clip_error_end_required"))
+        try:
+            time_range = parse_time_range(self.start_input.text(), self.end_input.text())
+        except TimeRangeError as exc:
+            if "greater than start" in str(exc):
+                raise TimeRangeError(self.t("local_clip_error_end_after_start")) from exc
+            raise TimeRangeError(self.t("local_clip_error_end_required")) from exc
+        try:
+            validate_against_duration(time_range, self.duration_seconds)
+        except TimeRangeError as exc:
+            raise TimeRangeError(self.t("local_clip_error_end_after_duration")) from exc
+        return time_range
+
+    def update_clip_state(self, *_args) -> None:
+        has_duration = self.duration_seconds is not None
+        for widget in (self.start_label, self.start_input, self.end_label, self.end_input, self.duration_label, self.duration_value_label):
+            widget.setEnabled(has_duration)
+
+        self.duration_value_label.setText("00:00")
+        self.expected_output_label.clear()
+        self.expected_output_label.setToolTip("")
+        if self.source_path is None:
+            self.range_error_label.setText(self.t("local_clip_select_source"))
+            self.clip_button.setEnabled(False)
+            return
+        if not has_duration:
+            self.range_error_label.setText(self.t("local_clip_duration_unavailable"))
+            self.clip_button.setEnabled(False)
+            return
+
+        try:
+            time_range = self.requested_time_range()
+        except TimeRangeError as exc:
+            self.range_error_label.setText(str(exc))
+            self.clip_button.setEnabled(False)
+            return
+
+        self.range_error_label.clear()
+        self.duration_value_label.setText(format_time_value(time_range.duration_seconds))
+        output_dir = Path(self.output_input.text()) if self.output_input.text().strip() else self.source_path.parent
+        expected = output_dir / f"{self.source_path.stem}_clip_{time_range.start_seconds}s-{time_range.end_seconds}s.mp4"
+        self.expected_output_label.setText(str(expected))
+        self.expected_output_label.setToolTip(str(expected))
+        self.clip_button.setEnabled(output_dir.is_dir())
+        if not output_dir.is_dir():
+            self.range_error_label.setText(self.t("local_clip_error_output"))
+
+    def accept_clip(self) -> None:
+        if self.source_path is None:
+            self.range_error_label.setText(self.t("local_clip_select_source"))
+            return
+        output_dir = Path(self.output_input.text()) if self.output_input.text().strip() else self.source_path.parent
+        if not output_dir.is_dir():
+            self.range_error_label.setText(self.t("local_clip_error_output"))
+            return
+        try:
+            time_range = self.requested_time_range()
+        except TimeRangeError as exc:
+            self.range_error_label.setText(str(exc))
+            return
+        self.clip_requested.emit(str(self.source_path), str(output_dir), time_range)
+        self.accept()
+
+    def probe_succeeded(self, worker: LocalClipProbeWorker, info: object) -> None:
+        if self._closed or worker is not self.probe_worker or not isinstance(info, MediaInfo):
+            return
+        self.source_info = info
+        duration = info.duration
+        self.duration_seconds = math.floor(duration) if duration is not None and math.isfinite(duration) and duration > 0 else None
+        self.media_info_label.setText(info.summary())
+        self.update_clip_state()
+        self.probe_worker = None
+
+    def probe_failed(self, worker: LocalClipProbeWorker, error: str) -> None:
+        if self._closed or worker is not self.probe_worker:
+            return
+        self.source_info = None
+        self.duration_seconds = None
+        self.media_info_label.setText(f"{self.t('local_clip_error_input')} {error}")
+        self.update_clip_state()
+        self.probe_worker = None
+
+    def _cancel_probe(self) -> None:
+        if self.probe_worker is not None:
+            self.probe_worker.cancel()
+            self.probe_worker = None
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._closed = True
+        self._cancel_probe()
+        super().closeEvent(event)
+
+
 class LocalTranscodeWorker(QThread):
     status = Signal(str)
     finished_ok = Signal(list)
@@ -486,18 +764,25 @@ class LocalTranscodeWorker(QThread):
         output_dir: Path,
         options: VideoTranscodeOptions,
         file_exists_action: str,
+        *,
+        time_range: TimeRange | None = None,
     ) -> None:
         super().__init__()
         self.paths = [str(Path(path)) for path in paths]
         self.output_dir = output_dir
         self.options = options
         self.file_exists_action = file_exists_action
+        self.time_range = time_range
         self.cancel_event = Event()
 
     def cancel(self) -> None:
         self.cancel_event.set()
 
     def run(self) -> None:
+        if self.time_range is not None:
+            self._run_local_clip()
+            return
+
         entries = []
         try:
             transcoder = VideoTranscoder(progress_callback=self.status.emit, cancel_event=self.cancel_event)
@@ -550,6 +835,46 @@ class LocalTranscodeWorker(QThread):
             self.failed.emit(str(exc))
         else:
             self.finished_ok.emit(entries)
+
+    def _run_local_clip(self) -> None:
+        try:
+            if len(self.paths) != 1:
+                raise ValueError("Local Clip requires exactly one source video.")
+            source = Path(self.paths[0])
+            self.status.emit(f"Local clip: {source}")
+            transcoder = VideoTranscoder(progress_callback=self.status.emit, cancel_event=self.cancel_event)
+            source_info = probe_media(source, transcoder.ffmpeg_path)
+            self.status.emit(f"Source media: {source_info.summary()}")
+            result = transcoder.transcode(
+                source,
+                self.options,
+                output_dir=self.output_dir,
+                file_exists_action="number",
+                time_range=self.time_range,
+            )
+        except TranscodeCancelled as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.finished_ok.emit(
+                [
+                    {
+                        "index": 1,
+                        "url": "",
+                        "title": source.stem,
+                        "source_path": str(source),
+                        "source_media_info": source_info,
+                        "media_info": result.media_info,
+                        "error": "",
+                        "results": [("mp4", str(result.path), result.skipped)],
+                        "transcode": True,
+                        "local_clip": True,
+                        "time_range": self.time_range,
+                        "transcode_options": self.options,
+                    }
+                ]
+            )
 
 
 def format_duration(seconds: int | None, unknown: str) -> str:
@@ -663,6 +988,8 @@ def task_has_downloaded_modes(
 
 
 class MainWindow(QMainWindow):
+    local_clip_probe_finished = Signal(object)
+
     def __init__(self) -> None:
         super().__init__()
         self.setAcceptDrops(True)
@@ -677,6 +1004,8 @@ class MainWindow(QMainWindow):
         self.worker: DownloadWorker | LocalTranscodeWorker | None = None
         self.preview_worker: PreviewWorker | None = None
         self.queue_worker: QueueBuildWorker | None = None
+        self._local_clip_probe_workers: set[LocalClipProbeWorker] = set()
+        self.local_clip_probe_finished.connect(self.release_local_clip_probe_worker)
         self.update_network_manager = QNetworkAccessManager(self)
         self.update_reply: QNetworkReply | None = None
         self.available_update: UpdateInfo | None = None
@@ -971,6 +1300,8 @@ class MainWindow(QMainWindow):
         self.open_button.clicked.connect(self.open_output_folder)
         self.add_local_video_button = QPushButton()
         self.add_local_video_button.clicked.connect(self.choose_local_videos)
+        self.local_clip_button = QPushButton()
+        self.local_clip_button.clicked.connect(self.open_local_clip_dialog)
         self.clear_url_button = QPushButton()
         self.clear_url_button.clicked.connect(self.url_input.clear)
         self.paste_url_button = QPushButton()
@@ -1269,6 +1600,7 @@ class MainWindow(QMainWindow):
         buttons.addWidget(self.cancel_button)
         buttons.addWidget(self.open_button)
         buttons.addWidget(self.add_local_video_button)
+        buttons.addWidget(self.local_clip_button)
         buttons.addWidget(self.clear_status_button)
         buttons.addStretch(1)
 
@@ -1660,6 +1992,7 @@ class MainWindow(QMainWindow):
         self.cancel_button.setText(self.t("cancel"))
         self.open_button.setText(self.t("open_output"))
         self.add_local_video_button.setText(self.t("add_local_video"))
+        self.local_clip_button.setText(self.t("local_clip_button"))
         self.clear_url_button.setText(self.t("clear_url"))
         self.clear_status_button.setText(self.t("clear_status"))
         self.preview_header.setText(self.t("preview"))
@@ -2671,6 +3004,54 @@ class MainWindow(QMainWindow):
         if files:
             self.start_local_transcode(files)
 
+    def retain_local_clip_probe_worker(self, worker: LocalClipProbeWorker) -> None:
+        self._local_clip_probe_workers.add(worker)
+        worker.finished.connect(lambda probe=worker: self.local_clip_probe_finished.emit(probe))
+
+    def release_local_clip_probe_worker(self, worker: LocalClipProbeWorker) -> None:
+        self._local_clip_probe_workers.discard(worker)
+        worker.deleteLater()
+
+    def open_local_clip_dialog(self) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+        dialog = LocalClipDialog(self)
+        dialog.clip_requested.connect(self.start_local_clip)
+        dialog.exec()
+
+    def start_local_clip(self, source_path: str, output_dir: str, time_range: TimeRange) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+        source = Path(source_path)
+        destination = Path(output_dir)
+        if not source.is_file() or source.suffix.lower() not in SUPPORTED_LOCAL_VIDEO_SUFFIXES:
+            QMessageBox.warning(self, self.t("error"), self.t("local_clip_error_input"))
+            return
+        if not destination.is_dir():
+            QMessageBox.warning(self, self.t("error"), self.t("local_clip_error_output"))
+            return
+
+        self.status_box.clear()
+        self.result_list.clear()
+        self.progress_bar.setValue(0)
+        self.progress_label.setText(self.t("progress_waiting"))
+        self.append_status(f"{self.t('local_clip_output_folder')}: {destination}")
+        self.set_running(True)
+
+        options = VideoTranscodeOptions.local_clip(time_range)
+        self.worker = LocalTranscodeWorker(
+            [str(source)],
+            destination,
+            options,
+            "number",
+            time_range=time_range,
+        )
+        self.worker.status.connect(self.append_status)
+        self.worker.finished_ok.connect(self.download_finished)
+        self.worker.failed.connect(self.local_clip_failed)
+        self.worker.finished.connect(lambda worker=self.worker: self.cleanup_worker(worker))
+        self.worker.start()
+
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -2759,7 +3140,11 @@ class MainWindow(QMainWindow):
             error_info = entry.get("error_info")
             time_range = entry.get("time_range")
             display_time_range = time_range if isinstance(time_range, TimeRange) else None
-            trim_template = self.t("trim_range_display") if display_time_range is not None else ""
+            trim_template = (
+                self.t("local_clip_range_display")
+                if entry.get("local_clip") is True
+                else self.t("trim_range_display")
+            ) if display_time_range is not None else ""
             if error or isinstance(error_info, DownloadErrorInfo):
                 failed_count += 1
                 message = (
@@ -2840,6 +3225,33 @@ class MainWindow(QMainWindow):
         self.append_status(f"{self.t('error')}: {friendly}")
         self.set_running(False)
 
+    def local_clip_failed(self, error: str) -> None:
+        lower = error.lower()
+        if "cancel" in lower:
+            self.append_status(self.t("local_clip_cancelled"))
+            self.progress_label.setText(self.t("local_clip_cancelled"))
+            self.set_running(False)
+            return
+
+        if "permission denied" in lower or "access is denied" in lower:
+            friendly = self.t("local_clip_error_permission")
+        elif "no space" in lower or "not enough space" in lower:
+            friendly = self.t("local_clip_error_space")
+        elif "encoder not available" in lower or "unknown encoder" in lower:
+            friendly = self.t("local_clip_error_encoder")
+        elif "known positive source duration" in lower:
+            friendly = self.t("local_clip_duration_unavailable")
+        elif "no such file" in lower or "input file does not exist" in lower:
+            friendly = self.t("local_clip_error_input")
+        elif "ffmpeg" in lower:
+            friendly = self.t("local_clip_error_ffmpeg")
+        else:
+            friendly = self.t("local_clip_error_failed")
+
+        self.append_status(f"{self.t('error')}: {friendly}")
+        self.append_status(f"Local Clip diagnostic: {error}")
+        self.set_running(False)
+
     def cleanup_worker(self, worker: DownloadWorker | LocalTranscodeWorker) -> None:
         if self.worker is worker:
             self.worker = None
@@ -2889,7 +3301,10 @@ class MainWindow(QMainWindow):
         self.refresh_history()
 
     def add_local_history(self, entry: dict, paths: list[str]) -> None:
-        video_options = self.current_video_transcode_options()
+        entry_options = entry.get("transcode_options")
+        video_options = entry_options if isinstance(entry_options, VideoTranscodeOptions) else self.current_video_transcode_options()
+        time_range = entry.get("time_range") if isinstance(entry.get("time_range"), TimeRange) else None
+        is_local_clip = entry.get("local_clip") is True
         result = load_history_result()
         self.report_history_load_status(result)
         if not result.safe_to_write:
@@ -2906,7 +3321,8 @@ class MainWindow(QMainWindow):
                 "paths": paths,
                 "converted_paths": paths,
                 "download_modes": ["mp4"],
-                "mode": "Local Transcode",
+                "mode": "Local Clip" if is_local_clip else "Local Transcode",
+                "local_clip": is_local_clip,
                 "video_format": video_options.container,
                 "video_processing_mode": video_options.mode,
                 "video_codec": video_options.video_codec,
@@ -2920,7 +3336,7 @@ class MainWindow(QMainWindow):
                 if entry.get("source_media_info")
                 else "",
                 "media_info": entry.get("media_info").summary() if entry.get("media_info") else "",
-            }),
+            }, time_range),
         )
         try:
             save_history(items)
@@ -2957,7 +3373,11 @@ class MainWindow(QMainWindow):
                 item.get("title", ""),
                 self.language,
                 time_range=time_range,
-                trim_template=self.t("trim_range_display") if time_range is not None else "",
+                trim_template=(
+                    self.t("local_clip_range_display")
+                    if item.get("local_clip") is True
+                    else self.t("trim_range_display")
+                ) if time_range is not None else "",
             )
             row = QListWidgetItem(text)
             row.setData(Qt.ItemDataRole.UserRole, path)
@@ -3064,6 +3484,7 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(not running)
         self.add_queue_button.setEnabled(not running)
         self.add_local_video_button.setEnabled(not running)
+        self.local_clip_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
         self.url_input.setEnabled(not running)
         self.paste_url_button.setEnabled(not running)
@@ -3131,6 +3552,11 @@ class MainWindow(QMainWindow):
             self.cancel_download()
             event.ignore()
             return
+        for probe_worker in tuple(self._local_clip_probe_workers):
+            probe_worker.cancel()
+        for probe_worker in tuple(self._local_clip_probe_workers):
+            if probe_worker.isRunning():
+                probe_worker.wait(16_000)
         if self.update_reply is not None:
             reply = self.update_reply
             self.update_reply = None
