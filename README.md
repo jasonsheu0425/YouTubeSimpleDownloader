@@ -4,10 +4,10 @@ A Windows desktop application for saving public YouTube videos and playlists as 
 
 ## Release installer
 
-Release installers are published on the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). For version 0.10.2, the installer filename is:
+Release installers are published on the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). For version 0.11.0, the installer filename is:
 
 ```text
-YouTubeSimpleDownloader_Setup_v0.10.2-inno-self-signed.exe
+YouTubeSimpleDownloader_Setup_v0.11.0-inno-self-signed.exe
 ```
 
 The installer defaults to the per-user location below and shows the destination page on every run. It does not reuse an older install folder automatically.
@@ -35,7 +35,8 @@ It creates a Start Menu shortcut and can create a desktop shortcut. No `E:` driv
 - Optional Trim Download for a single video using seconds, `MM:SS`, or `HH:MM:SS` start and end values.
 - Download history, result actions, and Traditional Chinese / English UI.
 - Non-blocking update reminders for newer stable GitHub releases, with an option to disable automatic checks.
-- H.264 MP4 transcoding, an osu! compatible video preset, local video batch conversion, and media probing.
+- H.264 MP4 transcoding, an osu! compatible video preset, local video batch conversion, media probing, and a separate single-video Local Clip workflow.
+- Local Clip creates a new H.264/yuv420p MP4 segment with AAC when the source has audio, without changing YouTube download, playlist, queue, or Trim Download settings.
 
 MP4 is a container, not a codec guarantee. A `.mp4` file can contain H.264, H.265, AV1, or another codec. Choose H.264 MP4 with `yuv420p` when maximum compatibility matters.
 
@@ -72,7 +73,7 @@ The release installer is self-signed for testing and friend-to-friend sharing. W
 Verify an installer after downloading it:
 
 ```powershell
-Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.10.2-inno-self-signed.exe -Algorithm SHA256
+Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.11.0-inno-self-signed.exe -Algorithm SHA256
 ```
 
 Compare the reported hash with the value in the matching GitHub Release.
@@ -85,6 +86,8 @@ Compare the reported hash with the value in the matching GitHub Release.
 4. For a single video, optionally enable Trim Download and enter a start and end time. Playlist and multi-URL trimming are not supported.
 5. Start downloading. Multiple URLs and playlists are expanded into the queue.
 6. Open the file, copy its path, or reveal it in Explorer from the result list.
+
+For one local video, use **Local Clip...** beside Local Transcode. Choose a source, enter a start and end range, and optionally choose an output folder. The output is a separately numbered MP4 such as `source_clip_30s-90s.mp4`; Local Clip does not overwrite existing files.
 
 For a playlist that changes over time, leave **Skip previously downloaded videos** enabled. Later runs check the recorded output formats and download only missing videos or formats.
 
@@ -172,7 +175,7 @@ Build the self-signed Inno Setup installer after the EXE bundle is ready:
 Expected installer:
 
 ```text
-release\YouTubeSimpleDownloader_Setup_v0.10.2-inno-self-signed.exe
+release\YouTubeSimpleDownloader_Setup_v0.11.0-inno-self-signed.exe
 ```
 
 ## Contributing and security

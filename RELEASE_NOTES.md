@@ -1,3 +1,34 @@
+# YouTube Simple Downloader v0.11.0
+
+## v0.11.0 - Local Clip
+
+### Added
+
+- Added a separate Local Clip workflow for one local video at a time.
+- Select a start and end time using seconds, `MM:SS`, or `HH:MM:SS`, then create
+  a deterministic H.264/yuv420p MP4 clip with AAC when the source has audio.
+- Local Clip preserves the source resolution and frame rate, uses CRF 20, the
+  medium preset, and faststart output.
+- Clip results and history show the clip range and retain the final output path
+  for open, copy, and show-folder actions.
+
+### Safety and compatibility
+
+- Local Clip writes an owned `.partial-<unique>.mp4` sibling before verifying
+  and safely finalizing a new output; it never overwrites or skips an existing
+  file.
+- Output defaults to the source folder and can be selected independently of
+  YouTube download settings. Local Clip source and output paths are not saved
+  in QSettings.
+- YouTube downloads, playlists, download queues, Trim Download, global download
+  settings, history identity, and yt-dlp behavior are unchanged.
+
+### Current limitations
+
+- Local Clip supports exactly one local video and one contiguous clip range per
+  operation. It does not add local batch clipping, multi-range clipping, or a
+  draggable timeline.
+
 # YouTube Simple Downloader v0.10.2
 
 ## v0.10.2 - Reliability Maintenance
