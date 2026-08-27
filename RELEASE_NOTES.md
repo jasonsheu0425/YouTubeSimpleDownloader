@@ -1,4 +1,22 @@
-# YouTube Simple Downloader v0.10.2
+# YouTube Simple Downloader v0.10.2.1
+
+## v0.10.2.1 - yt-dlp Compatibility Hotfix
+
+### Fixed
+
+- Updated the bundled yt-dlp dependency from `2026.6.9` to `2026.8.19`.
+  Controlled public-video A/B validation reproduced a media-stage HTTP 403
+  with the older version and completed MP3 and MP4 media downloads with the
+  newer version.
+- No downloader workaround, forced player client, cookie, proxy, or PO token
+  behavior was added.
+
+### Compatibility
+
+- Download modes, Trim Download, history, settings, and the verified FFmpeg
+  8.1.2 policy are unchanged.
+- The existing public-video-only, no-login, no-cookie, no-private-content
+  boundaries remain in effect.
 
 ## v0.10.2 - Reliability Maintenance
 
