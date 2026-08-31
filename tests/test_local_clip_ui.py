@@ -99,6 +99,27 @@ def test_local_clip_dialog_defaults_and_independent_output_folder(
         window.close()
 
 
+def test_local_clip_time_inputs_preserve_their_style_height(
+    qapp: QApplication,
+    isolated_settings: QSettings,
+) -> None:
+    window = app_module.MainWindow()
+    dialog = app_module.LocalClipDialog(window)
+    try:
+        dialog.show()
+        qapp.processEvents()
+
+        for input_widget in (dialog.start_input, dialog.end_input):
+            required_height = max(
+                input_widget.minimumSizeHint().height(), input_widget.sizeHint().height()
+            )
+            assert input_widget.minimumHeight() >= required_height
+            assert input_widget.height() >= required_height
+    finally:
+        dialog.close()
+        window.close()
+
+
 def test_local_clip_dialog_validates_ranges_and_requires_known_duration(
     qapp: QApplication,
     isolated_settings: QSettings,

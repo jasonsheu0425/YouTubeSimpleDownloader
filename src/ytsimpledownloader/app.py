@@ -606,6 +606,19 @@ class LocalClipDialog(QDialog):
         self.end_input.textChanged.connect(self.update_clip_state)
         self.update_clip_state()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        for input_widget in (self.start_input, self.end_input):
+            self._preserve_time_input_height(input_widget)
+
+    @staticmethod
+    def _preserve_time_input_height(input_widget: QLineEdit) -> None:
+        """Keep styled time inputs tall enough for their font and padding."""
+        input_widget.ensurePolished()
+        input_widget.setMinimumHeight(
+            max(input_widget.minimumSizeHint().height(), input_widget.sizeHint().height())
+        )
+
     def t(self, key: str) -> str:
         return self.main_window.t(key)
 
