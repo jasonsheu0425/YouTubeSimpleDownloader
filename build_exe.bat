@@ -19,6 +19,16 @@ if errorlevel 1 exit /b %errorlevel%
 rmdir /s /q build 2>nul
 rmdir /s /q dist 2>nul
 
+echo Sanitizing PyInstaller PATH: excluding ambient Codex and Poppler runtimes.
+set "PYINSTALLER_PATH="
+for /f "delims=" %%P in ('""%PROJECT_DIR%.venv\Scripts\python.exe" "%PROJECT_DIR%scripts\sanitize_pyinstaller_path.py""') do set "PYINSTALLER_PATH=%%P"
+if not defined PYINSTALLER_PATH (
+    echo Failed to construct a sanitized PyInstaller PATH.
+    exit /b 1
+)
+set "PATH=%PYINSTALLER_PATH%"
+set "PYINSTALLER_PATH="
+
 ".venv\Scripts\pyinstaller.exe" ^
     --noconfirm ^
     --clean ^
@@ -32,6 +42,9 @@ rmdir /s /q dist 2>nul
     --add-binary "ffmpeg\ffmpeg.exe;ffmpeg" ^
     run_app.py
 
+if errorlevel 1 exit /b %errorlevel%
+
+".venv\Scripts\python.exe" "scripts\check_packaged_qt_runtime.py" "dist\YouTubeSimpleDownloader\_internal"
 if errorlevel 1 exit /b %errorlevel%
 
 echo.
