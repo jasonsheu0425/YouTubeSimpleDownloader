@@ -1,3 +1,1 @@
-PySide6==6.10.1
-yt-dlp==2026.8.19
-imageio-ffmpeg==0.6.0
+-r requirements/runtime.lock

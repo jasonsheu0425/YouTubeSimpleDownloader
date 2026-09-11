@@ -101,9 +101,9 @@ Clone the repository instead of relying on a machine-specific path:
 git clone https://github.com/jasonsheu0425/YouTubeSimpleDownloader.git
 cd YouTubeSimpleDownloader
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements\bootstrap.lock
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e .
 ```
 
 Run the GUI:
@@ -112,14 +112,17 @@ Run the GUI:
 .\.venv\Scripts\python.exe -m ytsimpledownloader.app
 ```
 
-`requirements.txt` contains runtime dependencies. `requirements-build.txt` contains PyInstaller, and `requirements-dev.txt` contains test-only dependencies.
+`requirements.txt`, `requirements-build.txt`, and `requirements-dev.txt` select committed
+Windows/CPython 3.12 hash locks. Their concise inputs are in `requirements/*.in`;
+normal development, CI, and bundle builds never regenerate locks.
 
 ## Tests
 
 Install development dependencies and run the local regression tests:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e .
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m compileall src tests
 .\.venv\Scripts\python.exe tests\smoke_download.py --help
@@ -128,6 +131,19 @@ Install development dependencies and run the local regression tests:
 Pytest creates a short local video with FFmpeg and verifies media probing, H.264 MP4 conversion, the osu! preset, output auto-numbering, and friendly conversion errors. It does not download from YouTube.
 
 `smoke_download.py` supports both local FFmpeg-only checks and online YouTube checks. Commands with URLs require network access and a public video or playlist that does not need login.
+
+### Dependency lock maintenance
+
+Locks target CPython 3.12 on Windows x64 and are generated only deliberately with
+the pinned `pip==26.2.1` resolver. After creating a dedicated Python 3.12 environment
+and installing `requirements\\bootstrap.lock`, regenerate an affected lock explicitly:
+
+```powershell
+.\.lock-venv\Scripts\python.exe scripts\generate_windows_lock.py --input requirements\runtime.in --output requirements\runtime.lock
+```
+
+Review resolved package changes and run `python scripts\check_dependency_locks.py`
+before committing. CI and release builds only install existing locks.
 
 ```powershell
 # Online YouTube checks

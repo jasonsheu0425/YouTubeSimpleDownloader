@@ -1,0 +1,3 @@
+-r runtime.in
+
+pyinstaller==6.15.0

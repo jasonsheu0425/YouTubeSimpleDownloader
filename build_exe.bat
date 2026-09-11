@@ -8,10 +8,14 @@ if not exist ".venv\Scripts\python.exe" (
     C:\Windows\py.exe -3.12 -m venv .venv
 )
 
-".venv\Scripts\python.exe" -m pip install --upgrade pip
-".venv\Scripts\python.exe" -m pip install -r requirements.txt
-".venv\Scripts\python.exe" -m pip install -r requirements-build.txt
-".venv\Scripts\python.exe" -m pip install -e .
+".venv\Scripts\python.exe" -m pip install --require-hashes -r requirements\bootstrap.lock
+if errorlevel 1 exit /b %errorlevel%
+".venv\Scripts\python.exe" -m pip install --require-hashes -r requirements-build.txt
+if errorlevel 1 exit /b %errorlevel%
+".venv\Scripts\python.exe" -m pip install --no-deps --no-build-isolation -e .
+if errorlevel 1 exit /b %errorlevel%
+".venv\Scripts\python.exe" "scripts\check_dependency_locks.py"
+if errorlevel 1 exit /b %errorlevel%
 
 ".venv\Scripts\python.exe" "scripts\check_ffmpeg_artifact.py" "ffmpeg\ffmpeg.exe"
 if errorlevel 1 exit /b %errorlevel%

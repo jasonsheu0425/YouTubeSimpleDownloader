@@ -15,9 +15,9 @@ Thanks for helping improve the project.
 git clone https://github.com/jasonsheu0425/YouTubeSimpleDownloader.git
 cd YouTubeSimpleDownloader
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements\bootstrap.lock
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e .
 ```
 
 Run the checks before sending a pull request:
@@ -26,6 +26,7 @@ Run the checks before sending a pull request:
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m compileall src tests
 .\.venv\Scripts\python.exe tests\smoke_download.py --help
+.\.venv\Scripts\python.exe scripts\check_dependency_locks.py
 ```
 
 Keep changes focused, preserve the public-only scope, and include a clear explanation plus tests when behavior changes.
