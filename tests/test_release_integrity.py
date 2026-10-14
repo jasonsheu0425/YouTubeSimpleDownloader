@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,22 @@ from scripts.check_dependency_locks import parse_lock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_inventory_hash_cli_does_not_require_project_root(tmp_path, monkeypatch, capsys) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "app.exe").write_bytes(b"fixture")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["release_integrity.py", "inventory-hash", "--dist-dir", str(dist)],
+    )
+
+    assert integrity.main() == 0
+    assert capsys.readouterr().out.strip() == (
+        f"bundle-inventory-sha256={integrity.bundle_inventory_sha256(dist)}"
+    )
 
 
 def _write_fake_ffmpeg_policy(tmp_path: Path, ffmpeg_path: Path) -> Path:

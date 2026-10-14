@@ -1330,7 +1330,7 @@ def main() -> int:
 
     args = parser.parse_args()
     try:
-        root = args.project_root.resolve()
+        root = getattr(args, "project_root", PROJECT_ROOT).resolve()
         if args.command == "preflight":
             verify_build_environment()
             source = verify_source_tree(root)
