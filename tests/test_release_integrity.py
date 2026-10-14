@@ -334,11 +334,12 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
         inno_version="6.5.4",
     )
     sbom.write_text(json.dumps(bom), encoding="utf-8")
-    record = integrity.build_provenance_document(
+    provenance_args = dict(
         root=PROJECT_ROOT,
         installer_path=installer,
         sbom_path=sbom,
         staged_installer_script_path=staged_iss,
+        staged_installer_script_sha256=integrity.sha256_file(staged_iss),
         dist_dir=dist,
         ffmpeg_path=ffmpeg,
         policy_path=policy_path,
@@ -353,6 +354,11 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
             "certificate_thumbprint": "A" * 40,
         },
     )
+    with pytest.raises(integrity.ReleaseIntegrityError, match="differs from its pre-compile SHA-256"):
+        integrity.build_provenance_document(
+            **{**provenance_args, "staged_installer_script_sha256": "0" * 64}
+        )
+    record = integrity.build_provenance_document(**provenance_args)
     assert record["toolchain"]["inno_setup"] == "6.5.4"
     assert record["schema_version"] == 2
     assert re.fullmatch(r"[A-F0-9]{64}", record["inputs"]["staged_installer_script_sha256"])
@@ -404,6 +410,7 @@ def test_provenance_refuses_non_valid_signature_status() -> None:
             installer_path=PROJECT_ROOT / "missing.exe",
             sbom_path=PROJECT_ROOT / "missing.sbom.cdx.json",
             staged_installer_script_path=PROJECT_ROOT / "missing.iss",
+            staged_installer_script_sha256="A" * 64,
             dist_dir=PROJECT_ROOT / "missing-dist",
             ffmpeg_path=PROJECT_ROOT / "missing-ffmpeg.exe",
             policy_path=PROJECT_ROOT / "security/artifact_hashes.json",
@@ -456,10 +463,16 @@ def test_inno_build_records_compiler_engine_version_not_file_metadata() -> None:
 
 def test_inno_build_validates_staged_outputs_and_promotes_installer_last() -> None:
     content = (PROJECT_ROOT / "build_inno_installer.ps1").read_text(encoding="utf-8")
+    input_hash = content.index("$StagedIssSha256 = (Get-FileHash -LiteralPath $StagedIss -Algorithm SHA256).Hash")
+    compiler_start = content.index("$compilerProcess.Start()")
+    post_compile_hash = content.index("$PostCompileIssSha256 = (Get-FileHash -LiteralPath $StagedIss -Algorithm SHA256).Hash")
+    assert input_hash < compiler_start < post_compile_hash
+    assert '$PostCompileIssSha256 -cne $StagedIssSha256' in content
     staged_verify = content.index("& $Python $IntegrityScript verify")
     first_promotion = content.index("Move-Item -LiteralPath $StagedSbom")
     assert staged_verify < first_promotion
     assert content.count("--staged-installer-script $StagedIss") >= 3
+    assert "--staged-installer-script-sha256 $StagedIssSha256" in content
     sbom_promotion = first_promotion
     provenance_promotion = content.index("Move-Item -LiteralPath $StagedProvenance")
     certificate_promotion = content.index("Move-Item -LiteralPath $StagedCertificate")
@@ -470,6 +483,8 @@ def test_inno_build_validates_staged_outputs_and_promotes_installer_last() -> No
     assert "Move-Item -LiteralPath $item.Final -Destination $item.Staged -ErrorAction Stop" in content
     assert "Validated release outputs, but staging cleanup was incomplete" in content
     assert "Remove-Item -LiteralPath $resolvedStage -Recurse -Force -ErrorAction Stop" in content
+    assert "UNVERIFIED partial release output remains" in content
+    assert "Build staging retained for inspection: $StagingRoot" not in content
     assert "Staged installer script SHA-256" in content or "staged-installer-script" in content
 
 

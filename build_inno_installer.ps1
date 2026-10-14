@@ -192,6 +192,7 @@ try {
     if ($template -match "@[A-Z_]+@") { throw "Unexpanded placeholder remains in staged Inno script." }
     $StagedIss = Join-Path $StagingRoot "YouTubeSimpleDownloader.iss"
     Set-Content -LiteralPath $StagedIss -Value $template -Encoding UTF8
+    $StagedIssSha256 = (Get-FileHash -LiteralPath $StagedIss -Algorithm SHA256).Hash
 
     $StagedInstaller = Join-Path $CompilerOutput $InstallerFile
     $StagedSbom = Join-Path $StagingRoot $SbomFile
@@ -216,6 +217,10 @@ try {
         $compilerStderrTask.GetAwaiter().GetResult()
     if ($compilerProcess.ExitCode -ne 0) {
         throw "Inno Setup compile failed with exit code $($compilerProcess.ExitCode): $($compilerOutput.Trim())"
+    }
+    $PostCompileIssSha256 = (Get-FileHash -LiteralPath $StagedIss -Algorithm SHA256).Hash
+    if ($PostCompileIssSha256 -cne $StagedIssSha256) {
+        throw "The staged Inno script changed during compilation."
     }
     $compiledVersionMatch = [regex]::Match(
         $compilerOutput,
@@ -251,6 +256,7 @@ try {
         --installer $StagedInstaller `
         --sbom $StagedSbom `
         --staged-installer-script $StagedIss `
+        --staged-installer-script-sha256 $StagedIssSha256 `
         --dist-dir $PayloadDir `
         --ffmpeg $PayloadFfmpeg `
         --output $StagedProvenance `
@@ -311,7 +317,7 @@ try {
         Remove-Item -LiteralPath $resolvedStage -Recurse -Force -ErrorAction Stop
     }
     catch {
-        Write-Warning "Validated release outputs, but staging cleanup was incomplete; inspect: $resolvedStage"
+        Write-Warning "Validated release outputs, but staging cleanup was incomplete; retained staging requires inspection."
     }
 
     Write-Host "Inno Setup: $ISCCVersion"
@@ -336,12 +342,12 @@ catch {
                     Move-Item -LiteralPath $item.Final -Destination $item.Staged -ErrorAction Stop
                 }
                 catch {
-                    Write-Warning "Could not return promoted output to staging: $([IO.Path]::GetFileName($item.Final))"
+                    Write-Warning "UNVERIFIED partial release output remains: $([IO.Path]::GetFileName($item.Final)). Do not publish this build."
                 }
             }
         }
     }
     Write-Error $buildFailure
-    Write-Host "Build staging retained for inspection: $StagingRoot"
+    Write-Host "Build staging retained for inspection."
     throw
 }

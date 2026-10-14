@@ -911,6 +911,7 @@ def build_provenance_document(
     installer_path: Path,
     sbom_path: Path,
     staged_installer_script_path: Path,
+    staged_installer_script_sha256: str,
     dist_dir: Path,
     ffmpeg_path: Path,
     policy_path: Path,
@@ -938,6 +939,10 @@ def build_provenance_document(
         raise ReleaseIntegrityError("Installer and SBOM must both exist before provenance is recorded.")
     if not staged_installer_script_path.is_file():
         raise ReleaseIntegrityError("The exact staged Inno script must exist before provenance is recorded.")
+    if not re.fullmatch(r"[A-F0-9]{64}", staged_installer_script_sha256):
+        raise ReleaseIntegrityError("The pre-compile staged Inno script SHA-256 is missing or invalid.")
+    if sha256_file(staged_installer_script_path) != staged_installer_script_sha256:
+        raise ReleaseIntegrityError("The staged Inno script differs from its pre-compile SHA-256.")
     try:
         sbom_document = json.loads(sbom_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -1011,7 +1016,7 @@ def build_provenance_document(
         "toolchain": toolchain,
         "inputs": {
             **{name: _input_hashes(root, paths) for name, paths in input_paths.items()},
-            "staged_installer_script_sha256": sha256_file(staged_installer_script_path),
+            "staged_installer_script_sha256": staged_installer_script_sha256,
         },
         "ffmpeg": {
             "version": policy["version"],
@@ -1249,6 +1254,7 @@ def _run_self_test(root: Path) -> None:
                 installer_path=provenance_installer,
                 sbom_path=provenance_sbom,
                 staged_installer_script_path=provenance_iss,
+                staged_installer_script_sha256=sha256_file(provenance_iss),
                 dist_dir=dist,
                 ffmpeg_path=ffmpeg,
                 policy_path=fake_policy_path,
@@ -1334,6 +1340,7 @@ def main() -> int:
     provenance_parser.add_argument("--installer", type=Path, required=True)
     provenance_parser.add_argument("--sbom", type=Path, required=True)
     provenance_parser.add_argument("--staged-installer-script", type=Path, required=True)
+    provenance_parser.add_argument("--staged-installer-script-sha256", required=True)
     provenance_parser.add_argument("--dist-dir", type=Path, required=True)
     provenance_parser.add_argument("--ffmpeg", type=Path, required=True)
     provenance_parser.add_argument("--output", type=Path, required=True)
@@ -1391,6 +1398,7 @@ def main() -> int:
                 installer_path=args.installer.resolve(),
                 sbom_path=args.sbom.resolve(),
                 staged_installer_script_path=args.staged_installer_script.resolve(),
+                staged_installer_script_sha256=args.staged_installer_script_sha256,
                 dist_dir=args.dist_dir.resolve(),
                 ffmpeg_path=args.ffmpeg.resolve(),
                 policy_path=root / "security/artifact_hashes.json",
