@@ -372,6 +372,7 @@ def test_provenance_refuses_non_valid_signature_status() -> None:
 
 def test_build_script_refuses_existing_outputs_instead_of_deleting_them() -> None:
     content = (PROJECT_ROOT / "build_exe.bat").read_text(encoding="utf-8")
+    assert 'set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"' in content
     assert "Refusing to overwrite existing build output" in content
     assert "Refusing to overwrite existing dist output" in content
     assert "Refusing to reuse existing release build environment" in content
