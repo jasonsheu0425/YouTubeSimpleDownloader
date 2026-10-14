@@ -6,8 +6,18 @@ reused or modified. `build_exe.bat` refuses an existing `.release-venv`,
 `build`, or `dist` directory, then installs the hash-locked bootstrap and build environments,
 checks the source/version/lock policy, verifies FFmpeg, sanitizes the
 PyInstaller search path, builds the application, and runs the packaged Qt
-runtime gate. It stops rather than deleting existing `build` or `dist`
-directories. The Inno builder copies the signed bundle into a unique staged
+runtime gate. Python import-path overrides and user-site packages are disabled.
+The native search path contains only the build interpreter and Windows runtime
+directories; a separate collection-record check rejects native inputs from
+unrelated installations and compares the copied bytes. It stops rather than
+deleting existing `build` or `dist` directories.
+
+The build records the clean source commit/tree, hashes of all tracked inputs,
+and installed toolchain before packaging. It signs the application EXE and
+finishes `build/ytsd-bundle-build.json` only if source and environment still
+match. That receipt hashes the signed bundle and contains no machine paths.
+The Inno builder requires a matching receipt, verifies the existing signature
+without re-signing the EXE, then copies the signed bundle into a unique staged
 payload, reruns the Qt/FFmpeg gates, and compiles only from that snapshot. It
 compares a deterministic payload inventory digest before and after Inno
 compilation, generates the SBOM from that same snapshot, and refuses to
@@ -23,12 +33,22 @@ For an installer named `<name>.exe`, the installer build emits:
   staged payload compiled into the installer. The application executable is
   inventoried after Authenticode signing. FFmpeg's source URL and manifest archive-hash policy
   are included separately from the verified bundled executable hash.
-- `<name>.provenance.json`: a schema-validated local build record containing
+  The frozen archive also identifies shipped build packages and vendored Python
+  code; observed native OpenSSL, SQLite, libffi and MSVC binaries have separate
+  identities. Declared Python package licenses come from the installed wheel
+  metadata. Native file versions come from PE resources. CPython's libffi DLL
+  has no embedded release version, so its component deliberately omits a release
+  version and records the ABI filename, exact hash and matching Python-runtime
+  origin. This is an inventory with declared license evidence, not a complete
+  legal review of every native dependency.
+- `<name>.provenance.json`: a schema-validated version 3 local build record containing
   the clean source commit/tree, dependency lock and build-input hashes,
   Windows/Python/toolchain identity, FFmpeg facts, installer filename/size/
   SHA-256, staged bundle inventory digest/file count, SBOM SHA-256, the exact
   generated Inno script SHA-256, and Authenticode status/signer/certificate
-  thumbprint. The generated script's contents and machine-specific paths are
+  thumbprint, plus the producer's signed-bundle receipt. An old bundle from a
+  different commit, source drift during packaging, changed bundle bytes, or a
+  changed producer environment is rejected. The generated script's contents and machine-specific paths are
   not copied into the provenance record.
 
 The sidecars are not embedded into the installer. The SBOM does not hash the

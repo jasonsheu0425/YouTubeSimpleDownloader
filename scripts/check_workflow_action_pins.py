@@ -1,4 +1,9 @@
-"""Verify that external GitHub Actions use reviewed immutable revisions."""
+"""Verify reviewed Actions in simple, one-line YAML ``uses`` mappings.
+
+Only plain or singly/doubly quoted ``uses`` keys and action scalars are
+supported. Flow mappings, aliases, and block/multiline action scalars fail
+closed; this checker is deliberately not a general YAML parser.
+"""
 
 from __future__ import annotations
 
@@ -11,10 +16,17 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIRECTORY = Path(".github/workflows")
 FULL_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-USES_PATTERN = re.compile(
-    r"^\s*(?:-\s+)?uses:\s*(?P<action>[^@\s]+)@(?P<reference>[^\s#]+)"
-    r"(?:\s+#\s*(?P<release>[^\s]+))?\s*$"
+USES_KEY = re.compile(r"^\s*(?:-\s+)?(?:uses|'uses'|\"uses\")\s*:\s*(?P<value>.*)$")
+USES_TOKEN = re.compile(r"(?:^|[\s\[{,])(?:uses|'uses'|\"uses\")\s*:")
+EXPLICIT_USES_KEY = re.compile(r"^\s*(?:-\s+)?\?\s+(?:uses|'uses'|\"uses\")(?:\s+#.*)?\s*$")
+ACTION_VALUE = re.compile(
+    r"(?P<quote>['\"]?)(?P<action>[A-Za-z0-9._/-]+)@(?P<reference>[A-Za-z0-9._-]+)"
+    r"(?P=quote)(?:\s+#\s*(?P<release>[^\s]+))?\s*"
 )
+LOCAL_VALUE = re.compile(
+    r"(?P<quote>['\"]?)(?P<path>\./[^\s#'\"]+)(?P=quote)(?:\s+#.*)?\s*"
+)
+BLOCK_SCALAR = re.compile(r"^\s*(?:-\s+)?[^:#]+:\s*[|>][-+]?\s*(?:#.*)?$")
 
 
 @dataclass(frozen=True)
@@ -62,7 +74,7 @@ def verify_workflow_action_pins(
     project_root: Path = PROJECT_ROOT,
     workflow_paths: tuple[Path, ...] | None = None,
 ) -> int:
-    """Validate every external ``uses:`` reference in the selected workflows."""
+    """Validate supported one-line ``uses`` forms and reject other uses syntax."""
     checked = 0
     workflow_paths = workflow_paths or discover_workflow_paths(project_root)
 
@@ -73,18 +85,36 @@ def verify_workflow_action_pins(
         except OSError as exc:
             raise WorkflowActionPinError(f"Unable to read workflow {relative_path}: {exc}") from exc
 
+        block_indent: int | None = None
         for line_number, line in enumerate(lines, start=1):
-            match = USES_PATTERN.match(line)
-            if not match:
+            stripped = line.lstrip()
+            if not stripped or stripped.startswith("#"):
                 continue
 
-            action = match.group("action")
-            if action.startswith("./"):
-                continue
-
-            reference = match.group("reference")
-            release = match.group("release")
+            indent = len(line) - len(stripped)
+            if block_indent is not None:
+                if indent > block_indent:
+                    continue
+                block_indent = None
             location = f"{relative_path}:{line_number}"
+            match = USES_KEY.fullmatch(line)
+            if match is None:
+                if USES_TOKEN.search(line) or EXPLICIT_USES_KEY.fullmatch(line):
+                    raise WorkflowActionPinError(f"{location} has unsupported uses syntax.")
+                if BLOCK_SCALAR.fullmatch(line):
+                    block_indent = indent
+                continue
+
+            raw_value = match.group("value")
+            if LOCAL_VALUE.fullmatch(raw_value):
+                continue
+            value = ACTION_VALUE.fullmatch(raw_value)
+            if value is None:
+                raise WorkflowActionPinError(f"{location} has unsupported uses syntax.")
+
+            action = value.group("action")
+            reference = value.group("reference")
+            release = value.group("release")
 
             if not FULL_SHA_PATTERN.fullmatch(reference):
                 raise WorkflowActionPinError(

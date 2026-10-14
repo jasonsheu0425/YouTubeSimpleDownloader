@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import platform
 import re
 import sys
 from pathlib import Path
@@ -12,6 +14,37 @@ from scripts.check_dependency_locks import parse_lock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def structural_bundle_fixtures(monkeypatch):
+    # These tests use non-executable fixture bytes; real archive/metadata and
+    # producer-receipt enforcement have separate focused tests.
+    monkeypatch.setattr(integrity, "_discover_components", lambda _dist: [])
+    monkeypatch.setattr(integrity, "_ffmpeg_licenses", lambda *_args: [{"expression": "GPL-3.0-or-later"}])
+
+    def receipt(root, dist):
+        version = integrity._load_project(root)[1]
+        files = {"pyproject.toml": integrity.sha256_file(root / "pyproject.toml")}
+        digest = hashlib.sha256()
+        for name, file_hash in files.items():
+            digest.update(name.encode() + b"\0" + file_hash.encode() + b"\n")
+        packages = {}
+        for lock in integrity.LOCK_NAMES:
+            packages.update({name: item[0] for name, item in parse_lock(root / f"requirements/{lock}.lock").items()})
+        return {
+            "schema_version": 1, "record_type": "ytsd-bundle-build-receipt",
+            "source": {"commit": integrity._git(root, "rev-parse", "HEAD"),
+                       "tree": integrity._git(root, "rev-parse", "HEAD^{tree}"),
+                       "version": version, "tracked_files": files, "fingerprint_sha256": digest.hexdigest().upper()},
+            "environment": {"python": platform.python_version(), "implementation": "CPython",
+                            "architecture": platform.machine(), "operating_system": "Windows", "distributions": packages},
+            "bundle": integrity.bundle_build_receipt._bundle(dist),
+        }
+
+    monkeypatch.setattr(integrity, "_load_bundle_build", receipt)
+    monkeypatch.setattr(integrity, "_verify_bundle_build", lambda doc, root, dist, **_kwargs:
+                        integrity.bundle_build_receipt.verify_bundle_build(root, dist, doc, check_source=False))
 
 
 def test_inventory_hash_cli_does_not_require_project_root(tmp_path, monkeypatch, capsys) -> None:
@@ -44,7 +77,7 @@ def test_sbom_generator_uses_locked_python_module_cli(tmp_path, monkeypatch) -> 
     result = integrity._generate_base_bom(PROJECT_ROOT, tmp_path / "base.json", 123)
 
     assert result == {"bomFormat": "CycloneDX"}
-    assert calls[0][:3] == [r"C:\Python312\python.exe", "-m", "cyclonedx_py"]
+    assert calls[0][:4] == [r"C:\Python312\python.exe", "-I", "-m", "cyclonedx_py"]
 
 
 def _write_fake_ffmpeg_policy(tmp_path: Path, ffmpeg_path: Path) -> Path:
@@ -70,8 +103,6 @@ def _base_bom() -> dict[str, object]:
     runtime_entries = parse_lock(PROJECT_ROOT / "requirements/runtime.lock")
     components = []
     for name, (version, _) in sorted(runtime_entries.items()):
-        if name == "setuptools":
-            continue
         purl = f"pkg:pypi/{name}@{version}"
         components.append(
             {
@@ -163,7 +194,7 @@ def test_sbom_lists_runtime_packages_and_hashes_every_bundled_file(tmp_path, mon
         if component["type"] == "library"
     }
     assert packages["yt-dlp"] == "2026.8.19"
-    assert "setuptools" not in packages
+    assert packages["setuptools"] == "82.0.1"
     assert all(
         component["bom-ref"] == component["purl"]
         for component in first["components"]
@@ -291,6 +322,45 @@ def test_sbom_rejects_wrong_ffmpeg_executable_digest(tmp_path, monkeypatch) -> N
         )
 
 
+def test_sbom_requires_observed_extra_components_and_declared_licenses(tmp_path, monkeypatch) -> None:
+    dist, ffmpeg, _ = _fixture_bundle(tmp_path)
+    policy_path = _write_fake_ffmpeg_policy(tmp_path, ffmpeg)
+    policy = integrity._load_policy(policy_path)
+    version_line = "ffmpeg version 8.1.2-essentials_build-www.gyan.dev fixture"
+    monkeypatch.setattr(integrity, "verify_ffmpeg", lambda *_args: (policy, version_line))
+    observed = [{
+        "bom-ref": "pkg:generic/example-native@1.2", "type": "library",
+        "name": "Observed native library", "version": "1.2", "purl": "pkg:generic/example-native@1.2",
+        "properties": [{"name": "ytsd:component-role", "value": "bundled-native"}],
+    }]
+    monkeypatch.setattr(integrity, "_discover_components", lambda _dist: observed)
+    source = integrity._git(PROJECT_ROOT, "rev-parse", "HEAD")
+    epoch = int(integrity._git(PROJECT_ROOT, "show", "-s", "--format=%ct", source))
+    document = integrity.build_sbom_document(
+        _base_bom(), root=PROJECT_ROOT, dist_dir=dist, ffmpeg_path=ffmpeg,
+        policy_path=policy_path, qt_version="6.10.1.0", commit=source,
+        commit_epoch=epoch, inno_version="6.5.4",
+    )
+    verify = lambda bom: integrity._verify_sbom_semantics(
+        bom, root=PROJECT_ROOT, policy_path=policy_path, source_commit=source,
+        qt_version="6.10.1.0", python_version=platform.python_version(),
+        inno_version="6.5.4", ffmpeg_version_line=version_line, dist_dir=dist,
+    )
+    without_extra = json.loads(json.dumps(document))
+    without_extra["components"] = [item for item in without_extra["components"]
+                                    if item["bom-ref"] != observed[0]["bom-ref"]]
+    with pytest.raises(integrity.ReleaseIntegrityError, match="component attribution"):
+        verify(without_extra)
+    without_license = json.loads(json.dumps(document))
+    next(item for item in without_license["components"] if item.get("name") == "yt-dlp").pop("licenses")
+    with pytest.raises(integrity.ReleaseIntegrityError, match="license evidence"):
+        verify(without_license)
+    wrong_app_identity = json.loads(json.dumps(document))
+    wrong_app_identity["metadata"]["component"]["purl"] = "pkg:generic/wrong@1"
+    with pytest.raises(integrity.ReleaseIntegrityError, match="application identity"):
+        verify(wrong_app_identity)
+
+
 def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
     dist, ffmpeg, _ = _fixture_bundle(tmp_path)
     policy_path = _write_fake_ffmpeg_policy(tmp_path, ffmpeg)
@@ -360,7 +430,7 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
         )
     record = integrity.build_provenance_document(**provenance_args)
     assert record["toolchain"]["inno_setup"] == "6.5.4"
-    assert record["schema_version"] == 2
+    assert record["schema_version"] == 3
     assert re.fullmatch(r"[A-F0-9]{64}", record["inputs"]["staged_installer_script_sha256"])
     assert str(staged_iss) not in json.dumps(record)
     verify = lambda: integrity.verify_provenance_artifacts(
@@ -379,6 +449,12 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
     with pytest.raises(integrity.ReleaseIntegrityError, match="toolchain versions"):
         verify()
     record["toolchain"]["pip"] = original_pip
+    verify()
+    original_commit = record["bundle_build"]["source"]["commit"]
+    record["bundle_build"]["source"]["commit"] = "0" * 40
+    with pytest.raises(integrity.ReleaseIntegrityError, match="signed bundle build receipt"):
+        verify()
+    record["bundle_build"]["source"]["commit"] = original_commit
     verify()
     original_iss = staged_iss.read_bytes()
     staged_iss.write_bytes(b"[Setup]\nSourceRoot=changed\n")
@@ -435,8 +511,8 @@ def test_build_script_refuses_existing_outputs_instead_of_deleting_them() -> Non
     assert "Refusing to overwrite existing build output" in content
     assert "Refusing to overwrite existing dist output" in content
     assert "Refusing to reuse existing release build environment" in content
-    assert 'C:\\Windows\\py.exe -3.12 -m venv .release-venv' in content
-    assert '".release-venv\\Scripts\\python.exe" -m pip install --require-hashes -r requirements-build.txt' in content
+    assert 'C:\\Windows\\py.exe -3.12 -I -m venv .release-venv' in content
+    assert '".release-venv\\Scripts\\python.exe" -I -m pip install --require-hashes -r requirements-build.txt' in content
     assert '".venv\\Scripts\\python.exe"' not in content
     assert "rmdir /s /q" not in content.lower()
 
@@ -468,7 +544,7 @@ def test_inno_build_validates_staged_outputs_and_promotes_installer_last() -> No
     post_compile_hash = content.index("$PostCompileIssSha256 = (Get-FileHash -LiteralPath $StagedIss -Algorithm SHA256).Hash")
     assert input_hash < compiler_start < post_compile_hash
     assert '$PostCompileIssSha256 -cne $StagedIssSha256' in content
-    staged_verify = content.index("& $Python $IntegrityScript verify")
+    staged_verify = content.index("& $Python -E -s $IntegrityScript verify")
     first_promotion = content.index("Move-Item -LiteralPath $StagedSbom")
     assert staged_verify < first_promotion
     assert content.count("--staged-installer-script $StagedIss") >= 3
@@ -478,7 +554,7 @@ def test_inno_build_validates_staged_outputs_and_promotes_installer_last() -> No
     certificate_promotion = content.index("Move-Item -LiteralPath $StagedCertificate")
     installer_promotion = content.index("Move-Item -LiteralPath $StagedInstaller")
     assert sbom_promotion < provenance_promotion < certificate_promotion < installer_promotion
-    assert content.index("& $Python $IntegrityScript verify", installer_promotion) > installer_promotion
+    assert content.index("& $Python -E -s $IntegrityScript verify", installer_promotion) > installer_promotion
     assert "$PromotionVerified = $true" in content
     assert "Move-Item -LiteralPath $item.Final -Destination $item.Staged -ErrorAction Stop" in content
     assert "Validated release outputs, but staging cleanup was incomplete" in content

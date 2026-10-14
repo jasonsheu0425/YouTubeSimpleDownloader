@@ -1,4 +1,8 @@
 $ErrorActionPreference = "Stop"
+$env:PYTHONPATH = $null
+$env:PYTHONHOME = $null
+$env:PYTHONUSERBASE = $null
+$env:PYTHONNOUSERSITE = '1'
 
 $ProjectDir = [IO.Path]::GetFullPath((Split-Path -Parent $MyInvocation.MyCommand.Path))
 $AppName = "YouTubeSimpleDownloader"
@@ -9,6 +13,9 @@ $AppExe = Join-Path $DistDir "$AppName.exe"
 $DistFfmpeg = Join-Path $DistDir "_internal\ffmpeg\ffmpeg.exe"
 $Python = Join-Path $ProjectDir ".release-venv\Scripts\python.exe"
 $IntegrityScript = Join-Path $ProjectDir "scripts\release_integrity.py"
+$ReceiptScript = Join-Path $ProjectDir "scripts\bundle_build_receipt.py"
+$SignerScript = Join-Path $ProjectDir "scripts\sign_release_executable.ps1"
+$ReceiptPath = Join-Path $ProjectDir "build\ytsd-bundle-build.json"
 $ArtifactCheck = Join-Path $ProjectDir "scripts\check_ffmpeg_artifact.py"
 $QtCheck = Join-Path $ProjectDir "scripts\check_packaged_qt_runtime.py"
 $TemplatePath = Join-Path $ProjectDir "installer\YouTubeSimpleDownloader.iss"
@@ -90,7 +97,7 @@ $ISCCSigner = $ISCCSignature.SignerCertificate.GetNameInfo(
 if ($ISCCSigner -cne "Pyrsys B.V.") {
     throw "The selected Inno Setup compiler has an unexpected Authenticode signer: $ISCCSigner"
 }
-foreach ($requiredPath in @($AppExe, $DistFfmpeg, $Python, $IntegrityScript, $ArtifactCheck, $QtCheck, $TemplatePath)) {
+foreach ($requiredPath in @($AppExe, $DistFfmpeg, $Python, $IntegrityScript, $ReceiptScript, $SignerScript, $ReceiptPath, $ArtifactCheck, $QtCheck, $TemplatePath)) {
     if (!(Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "Required build input is missing: $([IO.Path]::GetFileName($requiredPath))"
     }
@@ -100,11 +107,19 @@ if (Test-Path -LiteralPath $SbomPath -PathType Leaf) { throw "Refusing to overwr
 if (Test-Path -LiteralPath $ProvenancePath -PathType Leaf) { throw "Refusing to overwrite existing provenance: $ProvenanceFile" }
 if (Test-Path -LiteralPath $CertPath -PathType Leaf) { throw "Refusing to overwrite existing public certificate: $CertificateFile" }
 
-& $Python $IntegrityScript preflight --project-root $ProjectDir
+& $Python -E -s $IntegrityScript preflight --project-root $ProjectDir
 if ($LASTEXITCODE -ne 0) { throw "Release source preflight failed with exit code $LASTEXITCODE." }
-& $Python $ArtifactCheck $DistFfmpeg
+& $Python -E -s $ReceiptScript verify --project-root $ProjectDir --dist-dir $DistDir --receipt $ReceiptPath --check-environment
+if ($LASTEXITCODE -ne 0) { throw "Dist bundle build receipt verification failed with exit code $LASTEXITCODE." }
+$appThumbprint = [string](& $SignerScript -Mode Verify -Path $AppExe)
+if (!$appThumbprint -or $appThumbprint -notmatch '^[A-Fa-f0-9]{40}$') {
+    throw "Signed application certificate thumbprint is missing."
+}
+$cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$appThumbprint"
+if (!$cert -or $cert.Subject -cne $Subject) { throw "Application signing certificate is unexpected." }
+& $Python -E -s $ArtifactCheck $DistFfmpeg
 if ($LASTEXITCODE -ne 0) { throw "Dist FFmpeg artifact verification failed with exit code $LASTEXITCODE." }
-& $Python $QtCheck (Join-Path $DistDir "_internal")
+& $Python -E -s $QtCheck (Join-Path $DistDir "_internal")
 if ($LASTEXITCODE -ne 0) { throw "Packaged Qt runtime verification failed with exit code $LASTEXITCODE." }
 
 $QtCore = Get-ChildItem -LiteralPath $DistDir -Recurse -File -Filter "Qt6Core.dll" | Select-Object -First 1
@@ -123,23 +138,6 @@ $CompilerOutput = Join-Path $StagingRoot "output"
 $PayloadDir = Join-Path $StagingRoot "payload"
 $PayloadFfmpeg = Join-Path $PayloadDir "_internal\ffmpeg\ffmpeg.exe"
 New-Item -ItemType Directory -Path $AssetsDir, $CompilerOutput, $PayloadDir | Out-Null
-
-$cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
-    Where-Object { $_.Subject -eq $Subject } |
-    Sort-Object NotAfter -Descending |
-    Select-Object -First 1
-
-if (!$cert) {
-    $cert = New-SelfSignedCertificate `
-        -Type CodeSigningCert `
-        -Subject $Subject `
-        -FriendlyName "Jason YouTube Simple Downloader Test Signing" `
-        -CertStoreLocation Cert:\CurrentUser\My `
-        -KeyAlgorithm RSA `
-        -KeyLength 3072 `
-        -HashAlgorithm SHA256 `
-        -NotAfter (Get-Date).AddYears(3)
-}
 
 function Assert-ValidSignature([string]$Path, [string]$ExpectedSubject, [string]$ExpectedThumbprint) {
     $signature = Get-AuthenticodeSignature -FilePath $Path
@@ -163,7 +161,6 @@ $PromotionVerified = $false
 
 try {
     Export-Certificate -Cert $cert -FilePath (Join-Path $AssetsDir $CertificateFile) | Out-Null
-    Set-AuthenticodeSignature -FilePath $AppExe -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     $appSignature = Assert-ValidSignature $AppExe $Subject $cert.Thumbprint
 
     Get-ChildItem -LiteralPath $DistDir -Force | ForEach-Object {
@@ -172,11 +169,14 @@ try {
     if (!(Test-Path -LiteralPath (Join-Path $PayloadDir "$AppName.exe") -PathType Leaf)) {
         throw "Staged installer payload is missing the application executable."
     }
-    & $Python $ArtifactCheck $PayloadFfmpeg
+    & $Python -E -s $ReceiptScript verify --project-root $ProjectDir --dist-dir $PayloadDir --receipt $ReceiptPath --check-environment
+    if ($LASTEXITCODE -ne 0) { throw "Staged bundle build receipt verification failed with exit code $LASTEXITCODE." }
+    $null = Assert-ValidSignature (Join-Path $PayloadDir "$AppName.exe") $Subject $cert.Thumbprint
+    & $Python -E -s $ArtifactCheck $PayloadFfmpeg
     if ($LASTEXITCODE -ne 0) { throw "Staged payload FFmpeg verification failed with exit code $LASTEXITCODE." }
-    & $Python $QtCheck (Join-Path $PayloadDir "_internal")
+    & $Python -E -s $QtCheck (Join-Path $PayloadDir "_internal")
     if ($LASTEXITCODE -ne 0) { throw "Staged payload Qt runtime verification failed with exit code $LASTEXITCODE." }
-    $PayloadInventoryBefore = [string](& $Python $IntegrityScript inventory-hash --dist-dir $PayloadDir)
+    $PayloadInventoryBefore = [string](& $Python -E -s $IntegrityScript inventory-hash --dist-dir $PayloadDir)
     if ($LASTEXITCODE -ne 0 -or $PayloadInventoryBefore -notmatch '^bundle-inventory-sha256=[A-F0-9]{64}$') {
         throw "Unable to capture the staged payload inventory digest."
     }
@@ -237,12 +237,14 @@ try {
     Set-AuthenticodeSignature -FilePath $StagedInstaller -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     $installerSignature = Assert-ValidSignature $StagedInstaller $Subject $cert.Thumbprint
 
-    $PayloadInventoryAfter = [string](& $Python $IntegrityScript inventory-hash --dist-dir $PayloadDir)
+    $PayloadInventoryAfter = [string](& $Python -E -s $IntegrityScript inventory-hash --dist-dir $PayloadDir)
     if ($LASTEXITCODE -ne 0 -or $PayloadInventoryAfter -ne $PayloadInventoryBefore) {
         throw "The installer payload changed while Inno Setup was compiling it."
     }
+    & $Python -E -s $ReceiptScript verify --project-root $ProjectDir --dist-dir $PayloadDir --receipt $ReceiptPath --check-environment
+    if ($LASTEXITCODE -ne 0) { throw "Post-compile staged bundle receipt verification failed with exit code $LASTEXITCODE." }
 
-    & $Python $IntegrityScript generate-sbom `
+    & $Python -E -s $IntegrityScript generate-sbom `
         --project-root $ProjectDir `
         --dist-dir $PayloadDir `
         --ffmpeg $PayloadFfmpeg `
@@ -251,7 +253,7 @@ try {
         --inno-version $ISCCVersion
     if ($LASTEXITCODE -ne 0) { throw "SBOM generation/validation failed with exit code $LASTEXITCODE." }
 
-    & $Python $IntegrityScript write-provenance `
+    & $Python -E -s $IntegrityScript write-provenance `
         --project-root $ProjectDir `
         --installer $StagedInstaller `
         --sbom $StagedSbom `
@@ -270,7 +272,7 @@ try {
         --certificate-thumbprint $cert.Thumbprint
     if ($LASTEXITCODE -ne 0) { throw "Provenance generation/validation failed with exit code $LASTEXITCODE." }
 
-    & $Python $IntegrityScript verify `
+    & $Python -E -s $IntegrityScript verify `
         --project-root $ProjectDir `
         --installer $StagedInstaller `
         --sbom $StagedSbom `
@@ -294,7 +296,7 @@ try {
     Move-Item -LiteralPath $StagedInstaller -Destination $InstallerPath
     $PromotedInstaller = $true
 
-    & $Python $IntegrityScript verify `
+    & $Python -E -s $IntegrityScript verify `
         --project-root $ProjectDir `
         --installer $InstallerPath `
         --sbom $SbomPath `

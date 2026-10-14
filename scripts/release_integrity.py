@@ -20,12 +20,15 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from scripts import bundle_build_receipt, bundle_components
     from scripts.check_dependency_locks import (
         parse_lock,
         verify_dependency_locks,
     )
     from scripts.dependency_lock_policy import normalized_name
 except ModuleNotFoundError:
+    import bundle_build_receipt
+    import bundle_components
     from check_dependency_locks import parse_lock, verify_dependency_locks
     from dependency_lock_policy import normalized_name
 
@@ -35,6 +38,7 @@ PROVENANCE_SCHEMA = Path("security/release_provenance.schema.json")
 REPOSITORY = "jasonsheu0425/YouTubeSimpleDownloader"
 SIGNER_SUBJECT = "CN=Jason YouTube Simple Downloader Test Signing"
 BUILD_INPUTS = (
+    "LICENSE",
     "pyproject.toml",
     "build_exe.bat",
     "build_inno_installer.ps1",
@@ -52,6 +56,10 @@ BUILD_INPUTS = (
     "scripts/check_packaged_qt_runtime.py",
     "scripts/sanitize_pyinstaller_path.py",
     "scripts/release_integrity.py",
+    "scripts/bundle_build_receipt.py",
+    "scripts/bundle_components.py",
+    "scripts/check_bundle_sources.py",
+    "scripts/sign_release_executable.ps1",
     "security/artifact_hashes.json",
     "security/release_provenance.schema.json",
 )
@@ -63,6 +71,61 @@ PIN_PATTERN = re.compile(
 
 class ReleaseIntegrityError(RuntimeError):
     """Raised when release identity or integrity evidence does not validate."""
+
+
+def _discover_components(dist_dir: Path) -> list[dict[str, Any]]:
+    evidence: dict[str, dict[str, Any]] = {}
+    # CPython's libffi DLL exposes its ABI in the filename but no PE release
+    # version. Retain that uncertainty only when its bytes match the interpreter.
+    bundled_libffi = dist_dir / "_internal/libffi-8.dll"
+    runtime_libffi = Path(sys.base_prefix) / "DLLs/libffi-8.dll"
+    if bundled_libffi.is_file() and runtime_libffi.is_file():
+        if sha256_file(bundled_libffi) != sha256_file(runtime_libffi):
+            raise ReleaseIntegrityError("Bundled libffi differs from the approved Python runtime.")
+        evidence["_internal/libffi-8.dll"] = {
+            "approved": True,
+            "sha256": sha256_file(bundled_libffi),
+            "source_sha256": sha256_file(runtime_libffi),
+            "version": None,
+            "version_unavailable": True,
+            "origin": f"CPython {platform.python_version()} distribution",
+        }
+    try:
+        return bundle_components.discover_bundled_components(dist_dir, native_evidence=evidence)
+    except bundle_components.BundleComponentError as exc:
+        raise ReleaseIntegrityError(str(exc)) from exc
+
+
+def _load_bundle_build(root: Path, dist_dir: Path) -> dict[str, Any]:
+    try:
+        receipt = bundle_build_receipt.load_bundle_build_receipt(root, dist_dir)
+        bundle_build_receipt.verify_bundle_build(root, dist_dir, receipt, check_environment=True)
+        return receipt
+    except bundle_build_receipt.BundleBuildError as exc:
+        raise ReleaseIntegrityError(str(exc)) from exc
+
+
+def _verify_bundle_build(document: dict[str, Any], root: Path, dist_dir: Path, *, check_source: bool) -> None:
+    try:
+        bundle_build_receipt.verify_bundle_build(root, dist_dir, document, check_source=check_source)
+    except bundle_build_receipt.BundleBuildError as exc:
+        raise ReleaseIntegrityError(str(exc)) from exc
+
+
+def _extra_component(component: dict[str, Any]) -> bool:
+    return any(
+        item.get("name") == "ytsd:component-role" and item.get("value") in {
+            "bundled-native", "bundled-python-extra", "bundled-vendored-python"
+        }
+        for item in component.get("properties", []) if isinstance(item, dict)
+    )
+
+
+def _ffmpeg_licenses(path: Path, expected_sha256: str) -> list[dict[str, Any]]:
+    try:
+        return bundle_components.ffmpeg_license_from_verified_binary(path, expected_sha256)
+    except bundle_components.BundleComponentError as exc:
+        raise ReleaseIntegrityError(str(exc)) from exc
 
 
 def sha256_file(path: Path) -> str:
@@ -330,13 +393,11 @@ def build_sbom_document(
     runtime_components: dict[str, dict[str, Any]] = {}
     for component in components:
         name = normalized_name(str(component.get("name", "")))
-        if name == "setuptools":
-            continue
         if name in runtime_components:
             raise ReleaseIntegrityError(f"CycloneDX BOM duplicates runtime package {name}.")
         runtime_components[name] = component
 
-    expected_runtime = {name: item[0] for name, item in runtime_entries.items() if name != "setuptools"}
+    expected_runtime = {name: item[0] for name, item in runtime_entries.items()}
     actual_runtime = {
         name: str(component.get("version", "")) for name, component in runtime_components.items()
     }
@@ -362,6 +423,7 @@ def build_sbom_document(
                 raise ReleaseIntegrityError("CycloneDX generator returned a duplicate component reference.")
             base_ref_map[ref] = expected_purl
         component["bom-ref"] = expected_purl
+        component.update(bundle_components.augment_component_licenses(component, name))
 
     files = _file_inventory(dist_dir)
     ffmpeg_relative = ffmpeg_path.resolve().relative_to(dist_dir.resolve()).as_posix()
@@ -389,6 +451,7 @@ def build_sbom_document(
             "name": app_name,
             "version": version,
             "purl": app_purl,
+            "licenses": [{"expression": project["project"]["license"]}],
         }
     )
 
@@ -435,6 +498,18 @@ def build_sbom_document(
             ],
         },
     ]
+    extra_components[0]["licenses"] = bundle_components.cpython_license_from_distribution(
+        Path(sys.base_prefix) / "LICENSE.txt"
+    )
+    extra_components[1]["licenses"] = bundle_components.metadata_licenses("pyside6-essentials")
+    extra_components[1]["properties"].append(
+        {"name": "ytsd:license-source", "value": "PySide6 Essentials wheel declared licensing"}
+    )
+    extra_components[2]["licenses"] = _ffmpeg_licenses(ffmpeg_path, policy["sha256"])
+    discovered = _discover_components(dist_dir)
+    known_refs = {item["bom-ref"] for item in [*runtime_components.values(), *extra_components]}
+    if any(item["bom-ref"] in known_refs for item in discovered):
+        raise ReleaseIntegrityError("Discovered bundle components duplicate locked package identities.")
 
     file_components: list[dict[str, Any]] = []
     for relative, _, digest in files:
@@ -456,12 +531,13 @@ def build_sbom_document(
         file_components.append(file_component)
 
     base_document["components"] = sorted(
-        [*runtime_components.values(), *extra_components, *file_components],
+        [*runtime_components.values(), *extra_components, *discovered, *file_components],
         key=lambda item: (str(item.get("type")), str(item.get("name")).casefold(), str(item.get("bom-ref"))),
     )
 
-    direct_refs = [runtime_components[name]["bom-ref"] for name in sorted(app_pins)]
+    direct_refs = [runtime_components[name]["bom-ref"] for name in sorted(runtime_components)]
     direct_refs.extend((python_purl, qt_purl, ffmpeg_purl))
+    direct_refs.extend(item["bom-ref"] for item in discovered)
     base_document["dependencies"] = _runtime_dependency_graph(
         runtime_components,
         app_ref=root_ref,
@@ -546,6 +622,7 @@ def build_sbom_document(
         python_version=py_version,
         inno_version=inno_version,
         ffmpeg_version_line=ffmpeg_version_line,
+        dist_dir=dist_dir,
     )
     return base_document
 
@@ -559,7 +636,6 @@ def _generate_base_bom(root: Path, output_path: Path, commit_epoch: int) -> dict
             "".join(
                 f"{name}=={version}\n"
                 for name, (version, _) in sorted(entries.items())
-                if name != "setuptools"
             ),
             encoding="utf-8",
             newline="\n",
@@ -569,6 +645,7 @@ def _generate_base_bom(root: Path, output_path: Path, commit_epoch: int) -> dict
         env["SOURCE_DATE_EPOCH"] = str(commit_epoch)
         command = [
             sys.executable,
+            "-I",
             "-m",
             "cyclonedx_py",
             "requirements",
@@ -608,6 +685,7 @@ def generate_sbom(
 ) -> dict[str, Any]:
     verify_build_environment()
     source = verify_source_tree(root)
+    _load_bundle_build(root, dist_dir)
     verify_dependency_locks(root)
     _, version = _load_project(root)
     commit_epoch = int(_git(root, "show", "-s", "--format=%ct", source["commit"]))
@@ -668,6 +746,7 @@ def _verify_sbom_semantics(
     python_version: str,
     inno_version: str,
     ffmpeg_version_line: str,
+    dist_dir: Path | None = None,
 ) -> None:
     project, app_version = _load_project(root)
     policy = _load_policy(policy_path)
@@ -683,9 +762,12 @@ def _verify_sbom_semantics(
             ("name", project["project"]["name"]),
             ("version", app_version),
             ("type", "application"),
+            ("purl", expected_app_ref),
         )
     ):
         raise ReleaseIntegrityError("SBOM application identity does not match the project metadata.")
+    if app.get("licenses") != [{"expression": project["project"]["license"]}]:
+        raise ReleaseIntegrityError("SBOM application license differs from the project declaration.")
 
     properties = metadata.get("properties", [])
     if not isinstance(properties, list):
@@ -712,6 +794,7 @@ def _verify_sbom_semantics(
         raise ReleaseIntegrityError("SBOM component inventory is missing.")
     package_versions: dict[str, str] = {}
     frameworks: dict[str, dict[str, Any]] = {}
+    extras: list[dict[str, Any]] = []
     component_refs: set[str] = set()
     for component in components:
         if not isinstance(component, dict):
@@ -720,6 +803,9 @@ def _verify_sbom_semantics(
         if not isinstance(ref, str) or not ref or ref in component_refs:
             raise ReleaseIntegrityError("SBOM component references are missing or duplicated.")
         component_refs.add(ref)
+        if _extra_component(component):
+            extras.append(component)
+            continue
         component_type = component.get("type")
         name = normalized_name(str(component.get("name", "")))
         if component_type == "library":
@@ -730,6 +816,8 @@ def _verify_sbom_semantics(
             if component.get("purl") != expected_purl or ref != expected_purl:
                 raise ReleaseIntegrityError(f"SBOM package URL identity is inconsistent for {name}.")
             package_versions[name] = version
+            if component.get("licenses") != bundle_components.metadata_licenses(name):
+                raise ReleaseIntegrityError(f"SBOM declared license evidence differs for {name}.")
         elif component_type == "framework":
             if name in frameworks:
                 raise ReleaseIntegrityError(f"SBOM duplicates framework component {name}.")
@@ -738,10 +826,12 @@ def _verify_sbom_semantics(
     locked_runtime = {
         name: data[0]
         for name, data in parse_lock(root / "requirements/runtime.lock").items()
-        if name != "setuptools"
     }
     if package_versions != locked_runtime:
         raise ReleaseIntegrityError("SBOM runtime component versions do not exactly match runtime.lock.")
+    expected_extras = _discover_components(dist_dir) if dist_dir is not None else []
+    if sorted(extras, key=lambda item: item["bom-ref"]) != expected_extras:
+        raise ReleaseIntegrityError("SBOM discovered component attribution differs from the frozen bundle.")
     if set(frameworks) != {"cpython", "qt", "ffmpeg"}:
         raise ReleaseIntegrityError("SBOM framework inventory contains missing or unexpected components.")
     pyside_version = locked_runtime.get("pyside6")
@@ -758,6 +848,14 @@ def _verify_sbom_semantics(
         component = frameworks.get(name)
         if not isinstance(component, dict) or component.get("version") != version or component.get("purl") != purl:
             raise ReleaseIntegrityError(f"SBOM {name} framework identity is inconsistent.")
+    declared_framework_licenses = {
+        "cpython": bundle_components.cpython_license_from_distribution(Path(sys.base_prefix) / "LICENSE.txt"),
+        "qt": bundle_components.metadata_licenses("pyside6-essentials"),
+        "ffmpeg": _ffmpeg_licenses(dist_dir / "_internal/ffmpeg/ffmpeg.exe", policy["sha256"]) if dist_dir else None,
+    }
+    for name, licenses in declared_framework_licenses.items():
+        if licenses is not None and frameworks[name].get("licenses") != licenses:
+            raise ReleaseIntegrityError(f"SBOM {name} license evidence differs from the distribution.")
 
     ffmpeg_component = frameworks["ffmpeg"]
     ffmpeg_properties = {
@@ -810,13 +908,14 @@ def _verify_sbom_semantics(
     expected_refs = {
         component.get("bom-ref")
         for component in components
-        if component.get("type") == "library" and normalized_name(str(component.get("name", ""))) in _requirement_pins(project)
+        if component.get("type") == "library" and not _extra_component(component)
     }
     expected_refs.update(component["purl"] for component in frameworks.values())
+    expected_refs.update(component["bom-ref"] for component in extras)
     runtime_components = {
         normalized_name(str(component.get("name", ""))): component
         for component in components
-        if component.get("type") == "library"
+        if component.get("type") == "library" and not _extra_component(component)
     }
     dependencies = document.get("dependencies", [])
     if not isinstance(dependencies, list):
@@ -943,6 +1042,13 @@ def build_provenance_document(
         raise ReleaseIntegrityError("The pre-compile staged Inno script SHA-256 is missing or invalid.")
     if sha256_file(staged_installer_script_path) != staged_installer_script_sha256:
         raise ReleaseIntegrityError("The staged Inno script differs from its pre-compile SHA-256.")
+    bundle_build = _load_bundle_build(root, dist_dir)
+    if (
+        bundle_build["source"]["commit"] != source["commit"]
+        or bundle_build["source"]["tree"] != source["tree"]
+        or bundle_build["source"]["version"] != version
+    ):
+        raise ReleaseIntegrityError("Signed bundle build receipt has a different source identity.")
     try:
         sbom_document = json.loads(sbom_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -958,6 +1064,7 @@ def build_provenance_document(
         python_version=platform.python_version(),
         inno_version=inno_version,
         ffmpeg_version_line=ffmpeg_version_line,
+        dist_dir=dist_dir,
     )
 
     commit_epoch = int(_git(root, "show", "-s", "--format=%ct", source["commit"]))
@@ -990,7 +1097,7 @@ def build_provenance_document(
 
     document = {
         "$schema": PROVENANCE_SCHEMA.as_posix(),
-        "schema_version": 2,
+        "schema_version": 3,
         "record_type": "ytsd-local-release-build-integrity-record",
         "unsigned": True,
         "application": {
@@ -1014,6 +1121,7 @@ def build_provenance_document(
             "python_implementation": toolchain["python_implementation"],
         },
         "toolchain": toolchain,
+        "bundle_build": bundle_build,
         "inputs": {
             **{name: _input_hashes(root, paths) for name, paths in input_paths.items()},
             "staged_installer_script_sha256": staged_installer_script_sha256,
@@ -1071,6 +1179,23 @@ def verify_provenance_artifacts(
 ) -> None:
     _schema_validate_provenance(document, root)
     _verify_provenance_toolchain(document, root)
+    _verify_bundle_build(document["bundle_build"], root, dist_dir, check_source=check_source)
+    receipt = document["bundle_build"]
+    if receipt["bundle"] != document["artifacts"]["bundle"]:
+        raise ReleaseIntegrityError("Provenance bundle inventory differs from the signed bundle build receipt.")
+    if (
+        any(receipt["source"][key] != document["source"][key] for key in ("commit", "tree"))
+        or receipt["source"]["version"] != document["application"]["version"]
+        or receipt["environment"]["python"] != document["toolchain"]["python"]
+    ):
+        raise ReleaseIntegrityError("Provenance facts differ from the signed bundle build receipt.")
+    for package, tool in (
+        ("pip", "pip"), ("setuptools", "setuptools"), ("pyinstaller", "pyinstaller"),
+        ("pyinstaller-hooks-contrib", "pyinstaller_hooks_contrib"),
+        ("cyclonedx-bom", "cyclonedx_bom"), ("cyclonedx-python-lib", "cyclonedx_python_lib"),
+    ):
+        if receipt["environment"]["distributions"].get(package) != document["toolchain"][tool]:
+            raise ReleaseIntegrityError("Provenance toolchain differs from the bundle producer environment.")
     installer = document["artifacts"]["installer"]
     sbom = document["artifacts"]["sbom"]
     if installer_path.name != installer["filename"] or installer_path.stat().st_size != installer["size_bytes"]:
@@ -1101,6 +1226,7 @@ def verify_provenance_artifacts(
         python_version=document["toolchain"]["python"],
         inno_version=document["toolchain"]["inno_setup"],
         ffmpeg_version_line=version_line,
+        dist_dir=dist_dir,
     )
     ffmpeg = document["ffmpeg"]
     if (
@@ -1198,6 +1324,9 @@ def _run_self_test(root: Path) -> None:
         # Use a small process-free fixture for structural and tamper checks; real builds
         # additionally execute the verified FFmpeg before writing the SBOM.
         original_verify_ffmpeg = verify_ffmpeg
+        original_discover = _discover_components
+        original_ffmpeg_licenses = _ffmpeg_licenses
+        original_load_bundle = _load_bundle_build
         try:
             def fixture_verify_ffmpeg(path: Path, policy_path: Path) -> tuple[dict[str, str], str]:
                 policy = _load_policy(policy_path)
@@ -1206,6 +1335,13 @@ def _run_self_test(root: Path) -> None:
                 return policy, fake_version_line
 
             globals()["verify_ffmpeg"] = fixture_verify_ffmpeg
+            globals()["_discover_components"] = lambda _dist: []
+            globals()["_ffmpeg_licenses"] = lambda *_args: [{"expression": "GPL-3.0-or-later"}]
+            start_record = temp_root / "bundle-start.json"
+            completed_record = temp_root / "bundle-build.json"
+            bundle_build_receipt.begin_bundle_build(root, start_record)
+            fixture_receipt = bundle_build_receipt.finish_bundle_build(root, start_record, dist, completed_record)
+            globals()["_load_bundle_build"] = lambda _root, _dist: fixture_receipt
             base = _generate_base_bom(root, temp_root / "base.json", commit_epoch)
             base_template = json.loads(json.dumps(base))
             sbom = build_sbom_document(
@@ -1317,6 +1453,9 @@ def _run_self_test(root: Path) -> None:
                 raise ReleaseIntegrityError("Provenance tamper check did not reject a changed installer.")
         finally:
             globals()["verify_ffmpeg"] = original_verify_ffmpeg
+            globals()["_discover_components"] = original_discover
+            globals()["_ffmpeg_licenses"] = original_ffmpeg_licenses
+            globals()["_load_bundle_build"] = original_load_bundle
     print("Release integrity self-test passed: CycloneDX schema, determinism, and tamper rejection.")
 
 
@@ -1444,7 +1583,8 @@ def main() -> int:
             _run_self_test(root)
         elif args.command == "inventory-hash":
             print(f"bundle-inventory-sha256={bundle_inventory_sha256(args.dist_dir.resolve())}")
-    except (OSError, KeyError, ValueError, subprocess.TimeoutExpired, ReleaseIntegrityError) as exc:
+    except (OSError, KeyError, ValueError, subprocess.TimeoutExpired, ReleaseIntegrityError,
+            bundle_components.BundleComponentError, bundle_build_receipt.BundleBuildError) as exc:
         parser.error(str(exc))
     return 0
 

@@ -30,6 +30,13 @@ def _write_workflow(root: Path, reference: str, release: str = "v7.0.1") -> Path
     return workflow_path.relative_to(root)
 
 
+def _write_workflow_text(root: Path, content: str) -> Path:
+    workflow_path = root / ".github" / "workflows" / "test.yml"
+    workflow_path.parent.mkdir(parents=True, exist_ok=True)
+    workflow_path.write_text(content, encoding="utf-8")
+    return workflow_path.relative_to(root)
+
+
 def test_repository_workflows_use_only_reviewed_immutable_action_pins() -> None:
     assert verify_workflow_action_pins() == 9
 
@@ -71,6 +78,63 @@ def test_release_comment_must_match_reviewed_release(tmp_path: Path) -> None:
 
     with pytest.raises(WorkflowActionPinError, match="records release"):
         verify_workflow_action_pins(tmp_path, (workflow_path,))
+
+
+def test_spaced_colon_mutable_reference_is_rejected(tmp_path: Path) -> None:
+    workflow_path = _write_workflow_text(
+        tmp_path, "steps:\n  - uses : actions/checkout@v7 # v7.0.1\n"
+    )
+
+    with pytest.raises(WorkflowActionPinError, match="mutable action reference"):
+        verify_workflow_action_pins(tmp_path, (workflow_path,))
+
+
+def test_quoted_key_and_scalar_are_checked(tmp_path: Path) -> None:
+    workflow_path = _write_workflow_text(
+        tmp_path,
+        f"steps:\n  - 'uses' : \"actions/checkout@{ACTION_PINS['actions/checkout'].commit}\" # v7.0.1\n",
+    )
+
+    assert verify_workflow_action_pins(tmp_path, (workflow_path,)) == 1
+
+
+def test_quoted_mutable_reference_is_rejected(tmp_path: Path) -> None:
+    workflow_path = _write_workflow_text(
+        tmp_path, 'steps:\n  - "uses": "actions/checkout@v7" # v7.0.1\n'
+    )
+
+    with pytest.raises(WorkflowActionPinError, match="mutable action reference"):
+        verify_workflow_action_pins(tmp_path, (workflow_path,))
+
+
+@pytest.mark.parametrize(
+    "uses_line",
+    [
+        "  - { uses: actions/checkout@v7 }",
+        "  - uses: >-",
+        "  - uses: [actions/checkout@v7]",
+        "  - uses: *checkout",
+        "  - uses: actions/checkout@v7 extra",
+        "  ? uses",
+    ],
+)
+def test_unsupported_uses_syntax_fails_closed(tmp_path: Path, uses_line: str) -> None:
+    workflow_path = _write_workflow_text(tmp_path, f"steps:\n{uses_line}\n")
+
+    with pytest.raises(WorkflowActionPinError, match="unsupported uses syntax"):
+        verify_workflow_action_pins(tmp_path, (workflow_path,))
+
+
+def test_uses_text_inside_run_block_is_not_an_action(tmp_path: Path) -> None:
+    workflow_path = _write_workflow_text(
+        tmp_path,
+        "steps:\n"
+        "  - run: |\n"
+        "      echo 'uses: actions/checkout@v7'\n"
+        f"  - uses: actions/checkout@{ACTION_PINS['actions/checkout'].commit} # v7.0.1\n",
+    )
+
+    assert verify_workflow_action_pins(tmp_path, (workflow_path,)) == 1
 
 
 def test_cli_reports_verified_references() -> None:

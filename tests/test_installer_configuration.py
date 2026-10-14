@@ -52,3 +52,29 @@ def test_installer_builder_expands_a_staged_template_without_mutating_it() -> No
     assert 'Set-Content -LiteralPath $StagedIss' in builder
     assert 'Set-Content -LiteralPath $TemplatePath' not in builder
     assert 'inventory-hash --dist-dir $PayloadDir' in builder
+    assert builder.count('$ReceiptScript verify --project-root $ProjectDir --dist-dir $PayloadDir') >= 2
+
+
+def test_bundle_receipt_and_signing_order_is_fixed() -> None:
+    batch = (INSTALLER_BUILD_SCRIPT.parent / "build_exe.bat").read_text(encoding="utf-8")
+    builder = installer_builder_text()
+    assert 'set "PYTHONPATH="' in batch
+    assert 'set "PYTHONHOME="' in batch
+    assert 'set "PYTHONNOUSERSITE=1"' in batch
+    begin = batch.index('bundle_build_receipt.py" begin')
+    save_path = batch.index('set "RELEASE_ORIGINAL_PATH=%PATH%"')
+    sanitize_path = batch.index('set "PATH=%PYINSTALLER_PATH%"')
+    pyinstaller = batch.index('-m PyInstaller')
+    qt_gate = batch.index(r'scripts\check_packaged_qt_runtime.py')
+    native_gate = batch.index(r'scripts\check_bundle_sources.py')
+    restore_path = batch.index('set "PATH=%RELEASE_ORIGINAL_PATH%"')
+    sign = batch.index('sign_release_executable.ps1" -Mode Sign')
+    finish = batch.index('bundle_build_receipt.py" finish')
+    assert begin < save_path < sanitize_path < pyinstaller < qt_gate < native_gate < restore_path < sign < finish
+    assert builder.index('$ReceiptScript verify --project-root $ProjectDir --dist-dir $DistDir') < builder.index('Get-ChildItem -LiteralPath $DistDir -Force')
+    assert builder.index('$ReceiptScript verify --project-root $ProjectDir --dist-dir $PayloadDir') < builder.index('$compilerProcess.Start()')
+    assert builder.index('$null = Assert-ValidSignature (Join-Path $PayloadDir "$AppName.exe")') < builder.index('$compilerProcess.Start()')
+    assert builder.count('Set-AuthenticodeSignature') == 1
+    assert 'Set-AuthenticodeSignature -FilePath $StagedInstaller' in builder
+    assert '$SignerScript -Mode Verify -Path $AppExe' in builder
+    assert '$null = Assert-ValidSignature (Join-Path $PayloadDir "$AppName.exe")' in builder

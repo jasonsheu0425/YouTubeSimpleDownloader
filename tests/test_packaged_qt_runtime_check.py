@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -61,16 +62,50 @@ def test_cli_reports_ambient_icu_contamination(tmp_path: Path) -> None:
     assert "ambient build-environment contamination" in result.stderr
 
 
-def test_sanitize_pyinstaller_path_preserves_tools_and_removes_ambient_runtimes() -> None:
-    path_value = ";".join(
-        [
-            r"C:\Windows\System32",
-            r"E:\YouTubeSimpleDownloader\.venv\Scripts",
-            r"C:\Users\jason\.cache\codex-runtimes\runtime\native\poppler\Library\bin",
-            r"C:\Tools\Poppler\Library\bin",
-        ]
+def test_sanitize_pyinstaller_path_uses_only_derived_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = tmp_path / "release-venv"
+    scripts = environment / "Scripts"
+    scripts.mkdir(parents=True)
+    executable = scripts / "python.exe"
+    executable.touch()
+    base = tmp_path / "base-python"
+    for suffix in ("", "Scripts", "DLLs"):
+        (base / suffix).mkdir(parents=True, exist_ok=True)
+    windows = tmp_path / "Windows"
+    (windows / "System32").mkdir(parents=True)
+    ambient = tmp_path / "HP" / "Poppler" / "codex-runtimes"
+    ambient.mkdir(parents=True)
+    monkeypatch.setenv("PATH", str(ambient))
+
+    result = sanitize_pyinstaller_path(
+        executable=executable, prefix=environment, base_prefix=base, system_root=windows
     )
 
-    assert sanitize_pyinstaller_path(path_value) == ";".join(
-        [r"C:\Windows\System32", r"E:\YouTubeSimpleDownloader\.venv\Scripts"]
-    )
+    assert result.split(os.pathsep) == [
+        str(scripts),
+        str(base),
+        str(base / "Scripts"),
+        str(base / "DLLs"),
+        str(windows / "System32"),
+        str(windows),
+    ]
+    assert str(ambient) not in result
+
+
+def test_sanitize_pyinstaller_path_rejects_unrelated_interpreter(tmp_path: Path) -> None:
+    environment = tmp_path / "release-venv"
+    (environment / "Scripts").mkdir(parents=True)
+    executable = tmp_path / "ambient" / "python.exe"
+    executable.parent.mkdir()
+    executable.touch()
+    base = tmp_path / "base-python"
+    base.mkdir()
+    windows = tmp_path / "Windows"
+    (windows / "System32").mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="Build interpreter"):
+        sanitize_pyinstaller_path(
+            executable=executable, prefix=environment, base_prefix=base, system_root=windows
+        )

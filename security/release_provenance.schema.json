@@ -13,6 +13,7 @@
     "source",
     "build_environment",
     "toolchain",
+    "bundle_build",
     "inputs",
     "ffmpeg",
     "artifacts",
@@ -20,7 +21,7 @@
   ],
   "properties": {
     "$schema": { "const": "security/release_provenance.schema.json" },
-    "schema_version": { "const": 2 },
+    "schema_version": { "const": 3 },
     "record_type": { "const": "ytsd-local-release-build-integrity-record" },
     "unsigned": { "const": true },
     "application": {
@@ -73,6 +74,7 @@
         "qt": { "type": "string", "minLength": 1 }
       }
     },
+    "bundle_build": { "$ref": "#/$defs/bundleBuild" },
     "inputs": {
       "type": "object",
       "additionalProperties": false,
@@ -150,6 +152,50 @@
     }
   },
   "$defs": {
+    "bundleBuild": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "record_type", "source", "environment", "bundle"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "record_type": { "const": "ytsd-bundle-build-receipt" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commit", "tree", "version", "tracked_files", "fingerprint_sha256"],
+          "properties": {
+            "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "version": { "type": "string", "minLength": 1 },
+            "tracked_files": { "$ref": "#/$defs/hashMap" },
+            "fingerprint_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["python", "implementation", "architecture", "operating_system", "distributions"],
+          "properties": {
+            "python": { "type": "string", "pattern": "^3\\.12\\.[0-9]+$" },
+            "implementation": { "const": "CPython" },
+            "architecture": { "type": "string", "minLength": 1 },
+            "operating_system": { "const": "Windows" },
+            "distributions": {
+              "type": "object", "minProperties": 1,
+              "additionalProperties": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "bundle": {
+          "type": "object", "additionalProperties": false,
+          "required": ["file_count", "inventory_sha256"],
+          "properties": {
+            "file_count": { "type": "integer", "minimum": 1 },
+            "inventory_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
+          }
+        }
+      }
+    },
     "hashMap": {
       "type": "object",
       "minProperties": 1,
