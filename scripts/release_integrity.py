@@ -267,6 +267,13 @@ def build_sbom_document(
     }
     if actual_runtime != expected_runtime:
         raise ReleaseIntegrityError("CycloneDX package versions do not exactly match the runtime lock.")
+    for name, component in runtime_components.items():
+        expected_purl = f"pkg:pypi/{name}@{actual_runtime[name]}"
+        if component.get("purl") != expected_purl:
+            raise ReleaseIntegrityError(f"CycloneDX package URL identity is inconsistent for {name}.")
+        # The requirements generator uses line identifiers as bom-refs; use the
+        # canonical package URL so the component and dependency graph agree.
+        component["bom-ref"] = expected_purl
     for name, version_pin in app_pins.items():
         if name not in runtime_components or str(runtime_components[name].get("version")) != version_pin:
             raise ReleaseIntegrityError(f"Application runtime pin {name} is absent or mismatched in the SBOM.")

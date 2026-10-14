@@ -93,8 +93,11 @@ def test_sbom_lists_runtime_packages_and_hashes_every_bundled_file(tmp_path, mon
 
     source = integrity._git(PROJECT_ROOT, "rev-parse", "HEAD")
     epoch = int(integrity._git(PROJECT_ROOT, "show", "-s", "--format=%ct", source))
+    base = _base_bom()
+    for index, component in enumerate(base["components"], start=1):
+        component["bom-ref"] = f"requirements-L{index}"
     first = integrity.build_sbom_document(
-        _base_bom(),
+        base,
         root=PROJECT_ROOT,
         dist_dir=dist,
         ffmpeg_path=ffmpeg,
@@ -126,6 +129,11 @@ def test_sbom_lists_runtime_packages_and_hashes_every_bundled_file(tmp_path, mon
     }
     assert packages["yt-dlp"] == "2026.8.19"
     assert "setuptools" not in packages
+    assert all(
+        component["bom-ref"] == component["purl"]
+        for component in first["components"]
+        if component["type"] == "library"
+    )
     file_components = [item for item in first["components"] if item["type"] == "file"]
     paths = {
         next(prop["value"] for prop in item["properties"] if prop["name"] == "ytsd:relative-path")
