@@ -4,8 +4,21 @@ setlocal
 set "PROJECT_DIR=%~dp0"
 cd /d "%PROJECT_DIR%"
 
+if exist "build" (
+    echo Refusing to overwrite existing build output: %CD%\build
+    exit /b 1
+)
+if exist "dist" (
+    echo Refusing to overwrite existing dist output: %CD%\dist
+    exit /b 1
+)
+
+py -3.12 "scripts\release_integrity.py" preflight --project-root "%PROJECT_DIR%"
+if errorlevel 1 exit /b %errorlevel%
+
 if not exist ".venv\Scripts\python.exe" (
     C:\Windows\py.exe -3.12 -m venv .venv
+    if errorlevel 1 exit /b %errorlevel%
 )
 
 ".venv\Scripts\python.exe" -m pip install --require-hashes -r requirements\bootstrap.lock
@@ -17,11 +30,11 @@ if errorlevel 1 exit /b %errorlevel%
 ".venv\Scripts\python.exe" "scripts\check_dependency_locks.py"
 if errorlevel 1 exit /b %errorlevel%
 
-".venv\Scripts\python.exe" "scripts\check_ffmpeg_artifact.py" "ffmpeg\ffmpeg.exe"
+".venv\Scripts\python.exe" "scripts\release_integrity.py" preflight --project-root "%PROJECT_DIR%"
 if errorlevel 1 exit /b %errorlevel%
 
-rmdir /s /q build 2>nul
-rmdir /s /q dist 2>nul
+".venv\Scripts\python.exe" "scripts\check_ffmpeg_artifact.py" "ffmpeg\ffmpeg.exe"
+if errorlevel 1 exit /b %errorlevel%
 
 echo Sanitizing PyInstaller PATH: excluding ambient Codex and Poppler runtimes.
 set "PYINSTALLER_PATH="

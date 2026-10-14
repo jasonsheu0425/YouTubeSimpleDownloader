@@ -194,6 +194,11 @@ Expected installer:
 release\YouTubeSimpleDownloader_Setup_v0.11.0-inno-self-signed.exe
 ```
 
+The installer builder also emits a CycloneDX SBOM and a local build-integrity
+provenance sidecar beside the installer. See
+[the release integrity guide](docs/release/build-integrity.md) for their scope,
+verification commands, and trust limitations.
+
 ## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and contribution guidance. See [SECURITY.md](SECURITY.md) for how to report a security issue without exposing URLs, cookies, tokens, or other private information.

@@ -26,7 +26,7 @@ jobs:
       - name: Verify dependency locks
         run: python scripts/check_dependency_locks.py
       - name: Run local regression tests
-        run: python -m pytest --ignore=tests/test_media_transcoding.py
+        run: python -m pytest --ignore=tests/test_media_transcoding.py --ignore=tests/test_release_integrity.py
       - name: Compile source and tests
         run: python -m compileall src tests
 
@@ -103,3 +103,29 @@ jobs:
         run: python scripts/check_dependency_locks.py
       - name: Run FFmpeg-dependent media tests
         run: python -m pytest tests/test_media_transcoding.py
+
+  release-integrity-tooling:
+    name: Release integrity tooling
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install hash-locked build tooling
+        run: |
+          python -m pip install --require-hashes -r requirements/bootstrap.lock
+          python -m pip install --require-hashes -r requirements-dev.txt
+          python -m pip install --require-hashes -r requirements-build.txt
+      - name: Verify dependency and Actions policies
+        run: |
+          python scripts/check_dependency_locks.py
+          python scripts/check_workflow_action_pins.py
+      - name: Compile release tooling
+        run: python -m compileall scripts
+      - name: Test release integrity implementation
+        run: python -m pytest tests/test_release_integrity.py
+      - name: Validate SBOM and provenance tooling
+        run: python scripts/release_integrity.py self-test

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jasonsheu0425/YouTubeSimpleDownloader/blob/main/security/release_provenance.schema.json",
+  "title": "YouTubeSimpleDownloader local release build integrity record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "record_type",
+    "unsigned",
+    "application",
+    "source",
+    "build_environment",
+    "toolchain",
+    "inputs",
+    "ffmpeg",
+    "artifacts",
+    "signing"
+  ],
+  "properties": {
+    "$schema": { "const": "security/release_provenance.schema.json" },
+    "schema_version": { "const": 1 },
+    "record_type": { "const": "ytsd-local-release-build-integrity-record" },
+    "unsigned": { "const": true },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "youtube-simple-downloader" },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "tree", "clean", "commit_time_utc"],
+      "properties": {
+        "repository": { "const": "jasonsheu0425/YouTubeSimpleDownloader" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "clean": { "const": true },
+        "commit_time_utc": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z$" }
+      }
+    },
+    "build_environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operating_system", "operating_system_version", "architecture", "python", "python_implementation"],
+      "properties": {
+        "operating_system": { "const": "Windows" },
+        "operating_system_version": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
+        "python": { "type": "string", "minLength": 1 },
+        "python_implementation": { "const": "CPython" }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "python_implementation", "pip", "setuptools", "pyinstaller", "pyinstaller_hooks_contrib", "cyclonedx_bom", "cyclonedx_python_lib", "inno_setup", "qt"],
+      "properties": {
+        "python": { "type": "string", "minLength": 1 },
+        "python_implementation": { "const": "CPython" },
+        "pip": { "type": "string", "minLength": 1 },
+        "setuptools": { "type": "string", "minLength": 1 },
+        "pyinstaller": { "type": "string", "minLength": 1 },
+        "pyinstaller_hooks_contrib": { "type": "string", "minLength": 1 },
+        "cyclonedx_bom": { "type": "string", "minLength": 1 },
+        "cyclonedx_python_lib": { "type": "string", "minLength": 1 },
+        "inno_setup": { "type": "string", "minLength": 1 },
+        "qt": { "type": "string", "minLength": 1 }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dependency_locks_sha256", "requirement_manifests_sha256", "build_inputs_sha256"],
+      "properties": {
+        "dependency_locks_sha256": { "$ref": "#/$defs/hashMap" },
+        "requirement_manifests_sha256": { "$ref": "#/$defs/hashMap" },
+        "build_inputs_sha256": { "$ref": "#/$defs/hashMap" }
+      }
+    },
+    "ffmpeg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "version_output", "source_url", "archive_sha256_policy", "archive_downloaded_and_rehashed_for_this_local_build", "executable_sha256", "executable_sha256_verified"],
+      "properties": {
+        "version": { "const": "8.1.2" },
+        "version_output": { "type": "string", "pattern": "^ffmpeg version 8\\.1\\.2[- ]" },
+        "source_url": { "const": "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip" },
+        "archive_sha256_policy": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+        "archive_downloaded_and_rehashed_for_this_local_build": { "const": false },
+        "executable_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" },
+        "executable_sha256_verified": { "const": true }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundle", "installer", "sbom"],
+      "properties": {
+        "bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file_count", "inventory_sha256"],
+          "properties": {
+            "file_count": { "type": "integer", "minimum": 1 },
+            "inventory_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
+          }
+        },
+        "installer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filename", "size_bytes", "sha256"],
+          "properties": {
+            "filename": { "type": "string", "pattern": "^[^\\\\/]+\\.exe$" },
+            "size_bytes": { "type": "integer", "minimum": 1 },
+            "sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
+          }
+        },
+        "sbom": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["filename", "format", "spec_version", "sha256"],
+          "properties": {
+            "filename": { "type": "string", "pattern": "^[^\\\\/]+\\.sbom\\.cdx\\.json$" },
+            "format": { "const": "CycloneDX" },
+            "spec_version": { "const": "1.6" },
+            "sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
+          }
+        }
+      }
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "application_exe_status", "installer_status", "signer_subject", "certificate_thumbprint", "trust_note"],
+      "properties": {
+        "method": { "const": "Authenticode SHA-256" },
+        "application_exe_status": { "const": "Valid" },
+        "installer_status": { "const": "Valid" },
+        "signer_subject": { "const": "CN=Jason YouTube Simple Downloader Test Signing" },
+        "certificate_thumbprint": { "type": "string", "pattern": "^[A-F0-9]{40}$" },
+        "trust_note": { "const": "Self-signed test certificate; Valid records signature integrity, not broad Windows trust." }
+      }
+    }
+  },
+  "$defs": {
+    "hashMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
+    }
+  }
+}

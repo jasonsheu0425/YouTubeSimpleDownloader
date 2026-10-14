@@ -31,7 +31,7 @@ def _write_workflow(root: Path, reference: str, release: str = "v7.0.1") -> Path
 
 
 def test_repository_workflows_use_only_reviewed_immutable_action_pins() -> None:
-    assert verify_workflow_action_pins() == 7
+    assert verify_workflow_action_pins() == 9
 
 
 def test_mutable_action_reference_is_rejected(tmp_path: Path) -> None:
@@ -82,7 +82,7 @@ def test_cli_reports_verified_references() -> None:
     )
 
     assert result.returncode == 0
-    assert "Verified 7 immutable GitHub Action references." in result.stdout
+    assert "Verified 9 immutable GitHub Action references." in result.stdout
 
 
 def test_all_current_workflows_are_discovered() -> None:
