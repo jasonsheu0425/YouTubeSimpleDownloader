@@ -1,3 +1,4 @@
 -r runtime.in
 
 pyinstaller==6.15.0
+cyclonedx-bom==7.5.0

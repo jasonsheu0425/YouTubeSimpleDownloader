@@ -14,12 +14,16 @@ from dataclasses import dataclass
 from email.parser import BytesParser
 from pathlib import Path
 
+try:
+    from scripts.dependency_lock_policy import LOCK_GENERATOR_PIP_VERSION
+except ModuleNotFoundError:
+    from dependency_lock_policy import LOCK_GENERATOR_PIP_VERSION
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TARGET_PYTHON_VERSION = "3.12"
 TARGET_PLATFORM = "win_amd64"
 TARGET_ABI = "cp312"
-LOCK_GENERATOR_PIP_VERSION = "26.2.1"
 NORMALIZED_NAME_PATTERN = re.compile(r"[-_.]+")
 
 
