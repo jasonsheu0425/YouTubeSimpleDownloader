@@ -227,6 +227,81 @@ def _bom_component(
     return component
 
 
+def _runtime_dependency_graph(
+    runtime_components: dict[str, dict[str, Any]],
+    *,
+    app_ref: str,
+    app_direct_refs: list[str],
+    base_dependencies: list[dict[str, Any]],
+    base_ref_map: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build a closed runtime graph, retaining generator edges and package metadata edges."""
+    try:
+        from packaging.requirements import Requirement
+    except ImportError as exc:
+        raise ReleaseIntegrityError("The locked packaging parser is required to build runtime relationships.") from exc
+
+    refs = {name: component["bom-ref"] for name, component in runtime_components.items()}
+    graph: dict[str, set[str]] = {
+        ref: set() for ref in {*refs.values(), *app_direct_refs}
+    }
+
+    # The CycloneDX requirements generator may emit only isolated requirement nodes, but
+    # retain any package relationships it does provide after canonicalizing its refs.
+    for item in base_dependencies:
+        original_ref = item.get("ref")
+        if original_ref not in base_ref_map:
+            raise ReleaseIntegrityError("CycloneDX dependency graph references an unknown component.")
+        ref = base_ref_map[original_ref]
+        if ref == app_ref:
+            continue
+        if ref not in graph:
+            raise ReleaseIntegrityError("CycloneDX dependency graph contains a non-runtime package node.")
+        targets = item.get("dependsOn", [])
+        if not isinstance(targets, list) or any(not isinstance(target, str) for target in targets):
+            raise ReleaseIntegrityError("CycloneDX dependency target list is malformed.")
+        for target in targets:
+            canonical_target = base_ref_map.get(target)
+            if canonical_target not in graph:
+                raise ReleaseIntegrityError("CycloneDX runtime relationship targets an unknown package.")
+            graph[ref].add(canonical_target)
+
+    # The requirements-mode generator does not resolve package-to-package edges. Derive
+    # the active default-extra graph from locked distribution metadata and fail if the
+    # runtime lock omits a dependency needed on this build platform.
+    for name, component in runtime_components.items():
+        try:
+            distribution = importlib.metadata.distribution(name)
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise ReleaseIntegrityError(f"Locked runtime package {name} is not installed in the build environment.") from exc
+        if distribution.version != component.get("version"):
+            raise ReleaseIntegrityError(f"Installed runtime package {name} differs from its SBOM version.")
+        for raw_requirement in distribution.requires or []:
+            try:
+                requirement = Requirement(raw_requirement)
+            except Exception as exc:
+                raise ReleaseIntegrityError(f"Runtime dependency metadata is invalid for {name}.") from exc
+            if requirement.marker is not None and not requirement.marker.evaluate({"extra": ""}):
+                continue
+            if requirement.extras:
+                raise ReleaseIntegrityError(
+                    f"Runtime package {name} requests dependency extras that are not represented by the runtime lock."
+                )
+            dependency_name = normalized_name(requirement.name)
+            dependency_ref = refs.get(dependency_name)
+            if dependency_ref is None:
+                raise ReleaseIntegrityError(
+                    f"Runtime lock omits active dependency {requirement.name} required by {name}."
+                )
+            graph[refs[name]].add(dependency_ref)
+
+    graph[app_ref] = set(app_direct_refs)
+    return [
+        {"ref": ref, "dependsOn": sorted(targets)}
+        for ref, targets in sorted(graph.items())
+    ]
+
+
 def build_sbom_document(
     base_document: dict[str, Any],
     *,
@@ -267,16 +342,26 @@ def build_sbom_document(
     }
     if actual_runtime != expected_runtime:
         raise ReleaseIntegrityError("CycloneDX package versions do not exactly match the runtime lock.")
-    for name, component in runtime_components.items():
-        expected_purl = f"pkg:pypi/{name}@{actual_runtime[name]}"
-        if component.get("purl") != expected_purl:
-            raise ReleaseIntegrityError(f"CycloneDX package URL identity is inconsistent for {name}.")
-        # The requirements generator uses line identifiers as bom-refs; use the
-        # canonical package URL so the component and dependency graph agree.
-        component["bom-ref"] = expected_purl
     for name, version_pin in app_pins.items():
         if name not in runtime_components or str(runtime_components[name].get("version")) != version_pin:
             raise ReleaseIntegrityError(f"Application runtime pin {name} is absent or mismatched in the SBOM.")
+
+    base_dependencies = base_document.get("dependencies", [])
+    if not isinstance(base_dependencies, list):
+        raise ReleaseIntegrityError("CycloneDX generator returned a malformed dependency graph.")
+    base_ref_map: dict[str, str] = {}
+    for name, component in runtime_components.items():
+        expected_purl = f"pkg:pypi/{name}@{component.get('version')}"
+        original_ref = component.get("bom-ref")
+        if not isinstance(original_ref, str) or not original_ref:
+            raise ReleaseIntegrityError(f"CycloneDX component {name} has no stable reference.")
+        if component.get("purl") != expected_purl:
+            raise ReleaseIntegrityError(f"CycloneDX package URL identity is inconsistent for {name}.")
+        for ref in (original_ref, expected_purl):
+            if ref in base_ref_map and base_ref_map[ref] != expected_purl:
+                raise ReleaseIntegrityError("CycloneDX generator returned a duplicate component reference.")
+            base_ref_map[ref] = expected_purl
+        component["bom-ref"] = expected_purl
 
     files = _file_inventory(dist_dir)
     ffmpeg_relative = ffmpeg_path.resolve().relative_to(dist_dir.resolve()).as_posix()
@@ -291,7 +376,12 @@ def build_sbom_document(
     root_component = base_document.setdefault("metadata", {}).get("component")
     if not isinstance(root_component, dict):
         raise ReleaseIntegrityError("CycloneDX generator did not include the application root component.")
+    original_root_ref = root_component.get("bom-ref")
+    if not isinstance(original_root_ref, str) or not original_root_ref:
+        raise ReleaseIntegrityError("CycloneDX application root has no stable reference.")
     root_ref = app_purl
+    base_ref_map[original_root_ref] = root_ref
+    base_ref_map[root_ref] = root_ref
     root_component.update(
         {
             "bom-ref": root_ref,
@@ -372,7 +462,13 @@ def build_sbom_document(
 
     direct_refs = [runtime_components[name]["bom-ref"] for name in sorted(app_pins)]
     direct_refs.extend((python_purl, qt_purl, ffmpeg_purl))
-    base_document["dependencies"] = [{"ref": root_ref, "dependsOn": sorted(set(direct_refs))}]
+    base_document["dependencies"] = _runtime_dependency_graph(
+        runtime_components,
+        app_ref=root_ref,
+        app_direct_refs=sorted(set(direct_refs)),
+        base_dependencies=base_dependencies,
+        base_ref_map=base_ref_map,
+    )
 
     metadata = base_document.setdefault("metadata", {})
     metadata["timestamp"] = datetime.fromtimestamp(commit_epoch, timezone.utc).isoformat(
@@ -712,18 +808,29 @@ def _verify_sbom_semantics(
         if not version or observed_tools.get(name) != version:
             raise ReleaseIntegrityError(f"SBOM build tool {name} does not match its lock/version source.")
 
-    dependencies = document.get("dependencies", [])
-    app_dependencies = [item for item in dependencies if isinstance(item, dict) and item.get("ref") == expected_app_ref]
-    if len(app_dependencies) != 1:
-        raise ReleaseIntegrityError("SBOM application dependency entry is missing or duplicated.")
     expected_refs = {
         component.get("bom-ref")
         for component in components
         if component.get("type") == "library" and normalized_name(str(component.get("name", ""))) in _requirement_pins(project)
     }
     expected_refs.update(component["purl"] for component in frameworks.values())
-    if set(app_dependencies[0].get("dependsOn", [])) != expected_refs:
-        raise ReleaseIntegrityError("SBOM application dependency relationships are incomplete or inconsistent.")
+    runtime_components = {
+        normalized_name(str(component.get("name", ""))): component
+        for component in components
+        if component.get("type") == "library"
+    }
+    dependencies = document.get("dependencies", [])
+    if not isinstance(dependencies, list):
+        raise ReleaseIntegrityError("SBOM dependency graph is malformed.")
+    expected_graph = _runtime_dependency_graph(
+        runtime_components,
+        app_ref=expected_app_ref,
+        app_direct_refs=sorted(expected_refs),
+        base_dependencies=[],
+        base_ref_map={},
+    )
+    if dependencies != expected_graph:
+        raise ReleaseIntegrityError("SBOM runtime dependency relationships are incomplete or inconsistent.")
 
 
 def _schema_validate_provenance(document: dict[str, Any], root: Path) -> None:

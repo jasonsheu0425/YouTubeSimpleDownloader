@@ -1,4 +1,5 @@
 .venv/
+.release-venv/
 build/
 dist/
 downloads/

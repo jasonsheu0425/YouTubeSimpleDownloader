@@ -1,7 +1,9 @@
 # Release Build Integrity
 
-The Windows release build uses the committed CPython 3.12 x64 dependency locks.
-`build_exe.bat` installs the hash-locked bootstrap and build environments,
+The Windows release build uses a fresh, dedicated `.release-venv` and the
+committed CPython 3.12 x64 dependency locks; the developer/test `.venv` is never
+reused or modified. `build_exe.bat` refuses an existing `.release-venv`,
+`build`, or `dist` directory, then installs the hash-locked bootstrap and build environments,
 checks the source/version/lock policy, verifies FFmpeg, sanitizes the
 PyInstaller search path, builds the application, and runs the packaged Qt
 runtime gate. It stops rather than deleting existing `build` or `dist`

@@ -134,6 +134,16 @@ def test_sbom_lists_runtime_packages_and_hashes_every_bundled_file(tmp_path, mon
         for component in first["components"]
         if component["type"] == "library"
     )
+    dependency_graph = {
+        item["ref"]: set(item.get("dependsOn", []))
+        for item in first["dependencies"]
+    }
+    assert "pkg:pypi/pyside6-essentials@6.10.1" in dependency_graph[
+        "pkg:pypi/pyside6@6.10.1"
+    ]
+    assert "pkg:generic/ffmpeg@8.1.2" in dependency_graph[
+        "pkg:generic/youtube-simple-downloader@0.11.0"
+    ]
     file_components = [item for item in first["components"] if item["type"] == "file"]
     paths = {
         next(prop["value"] for prop in item["properties"] if prop["name"] == "ytsd:relative-path")
@@ -155,6 +165,26 @@ def test_sbom_lists_runtime_packages_and_hashes_every_bundled_file(tmp_path, mon
     with pytest.raises(integrity.ReleaseIntegrityError, match="package URL identity"):
         integrity._verify_sbom_semantics(
             changed_purl,
+            root=PROJECT_ROOT,
+            policy_path=policy_path,
+            source_commit=source,
+            qt_version="6.10.1.0",
+            python_version=next(
+                item["version"] for item in first["components"] if item.get("name") == "CPython"
+            ),
+            inno_version="6.5.4",
+            ffmpeg_version_line="ffmpeg version 8.1.2-essentials_build-www.gyan.dev fixture",
+        )
+
+    changed_graph = json.loads(json.dumps(first))
+    pyside_ref = "pkg:pypi/pyside6@6.10.1"
+    pyside_dependencies = next(
+        item for item in changed_graph["dependencies"] if item["ref"] == pyside_ref
+    )
+    pyside_dependencies["dependsOn"].remove("pkg:pypi/pyside6-essentials@6.10.1")
+    with pytest.raises(integrity.ReleaseIntegrityError, match="relationships are incomplete"):
+        integrity._verify_sbom_semantics(
+            changed_graph,
             root=PROJECT_ROOT,
             policy_path=policy_path,
             source_commit=source,
@@ -344,6 +374,10 @@ def test_build_script_refuses_existing_outputs_instead_of_deleting_them() -> Non
     content = (PROJECT_ROOT / "build_exe.bat").read_text(encoding="utf-8")
     assert "Refusing to overwrite existing build output" in content
     assert "Refusing to overwrite existing dist output" in content
+    assert "Refusing to reuse existing release build environment" in content
+    assert 'C:\\Windows\\py.exe -3.12 -m venv .release-venv' in content
+    assert '".release-venv\\Scripts\\python.exe" -m pip install --require-hashes -r requirements-build.txt' in content
+    assert '".venv\\Scripts\\python.exe"' not in content
     assert "rmdir /s /q" not in content.lower()
 
 
