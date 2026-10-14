@@ -428,6 +428,12 @@ def test_inno_build_records_compiler_engine_version_not_file_metadata() -> None:
     assert '$registeredInnoInstallations[0].Publisher -cne "jrsoftware.org"' in content
     assert 'Get-AuthenticodeSignature -FilePath $ISCC' in content
     assert '$ISCCSignature.Status.ToString() -ne "Valid"' in content
+    assert '$ISCCSigner -cne "Pyrsys B.V."' in content
+    assert '$compilerStartInfo.ArgumentList.Add($StagedIss)' in content
+    assert 'RedirectStandardOutput = $true' in content
+    assert 'RedirectStandardError = $true' in content
+    assert "Compiler engine version:\\s*Inno Setup" in content
+    assert '$compiledISCCVersion -cne $ISCCVersion' in content
     assert "registeredInnoInstallations.Count -ne 1" in content
     assert "GetVersionInfo($ISCC.FullName)" not in content
 

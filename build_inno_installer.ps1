@@ -83,6 +83,13 @@ $ISCCSignature = Get-AuthenticodeSignature -FilePath $ISCC
 if ($ISCCSignature.Status.ToString() -ne "Valid") {
     throw "The selected Inno Setup compiler does not have a valid Authenticode signature."
 }
+$ISCCSigner = $ISCCSignature.SignerCertificate.GetNameInfo(
+    [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+    $false
+)
+if ($ISCCSigner -cne "Pyrsys B.V.") {
+    throw "The selected Inno Setup compiler has an unexpected Authenticode signer: $ISCCSigner"
+}
 foreach ($requiredPath in @($AppExe, $DistFfmpeg, $Python, $IntegrityScript, $ArtifactCheck, $QtCheck, $TemplatePath)) {
     if (!(Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "Required build input is missing: $([IO.Path]::GetFileName($requiredPath))"
@@ -185,8 +192,35 @@ try {
     $StagedProvenance = Join-Path $StagingRoot $ProvenanceFile
     $StagedCertificate = Join-Path $AssetsDir $CertificateFile
 
-    & $ISCC $StagedIss
-    if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed with exit code $LASTEXITCODE." }
+    $compilerStartInfo = [Diagnostics.ProcessStartInfo]::new()
+    $compilerStartInfo.FileName = $ISCC
+    $compilerStartInfo.ArgumentList.Add($StagedIss)
+    $compilerStartInfo.UseShellExecute = $false
+    $compilerStartInfo.CreateNoWindow = $true
+    $compilerStartInfo.RedirectStandardOutput = $true
+    $compilerStartInfo.RedirectStandardError = $true
+    $compilerProcess = [Diagnostics.Process]::new()
+    $compilerProcess.StartInfo = $compilerStartInfo
+    if (!$compilerProcess.Start()) { throw "Unable to start the Inno Setup compiler." }
+    $compilerStdoutTask = $compilerProcess.StandardOutput.ReadToEndAsync()
+    $compilerStderrTask = $compilerProcess.StandardError.ReadToEndAsync()
+    $compilerProcess.WaitForExit()
+    $compilerOutput = $compilerStdoutTask.GetAwaiter().GetResult() + "`n" +
+        $compilerStderrTask.GetAwaiter().GetResult()
+    if ($compilerProcess.ExitCode -ne 0) {
+        throw "Inno Setup compile failed with exit code $($compilerProcess.ExitCode): $($compilerOutput.Trim())"
+    }
+    $compiledVersionMatch = [regex]::Match(
+        $compilerOutput,
+        '(?m)^Compiler engine version:\s*Inno Setup (?<version>\d+(?:\.\d+){1,3})\s*$'
+    )
+    if (!$compiledVersionMatch.Success) {
+        throw "Inno Setup compiler output did not identify its engine version."
+    }
+    $compiledISCCVersion = $compiledVersionMatch.Groups["version"].Value
+    if ($compiledISCCVersion -cne $ISCCVersion) {
+        throw "Inno Setup compiler output version $compiledISCCVersion does not match registered version $ISCCVersion."
+    }
     if (!(Test-Path -LiteralPath $StagedInstaller -PathType Leaf)) { throw "Inno Setup did not create the expected installer." }
     Set-AuthenticodeSignature -FilePath $StagedInstaller -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     $installerSignature = Assert-ValidSignature $StagedInstaller $Subject $cert.Thumbprint
