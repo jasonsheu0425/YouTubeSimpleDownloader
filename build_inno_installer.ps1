@@ -62,6 +62,7 @@ $registeredInnoInstallations = @(
                         [pscustomobject]@{
                             DisplayName = [string]$entry.DisplayName
                             DisplayVersion = [string]$entry.DisplayVersion
+                            Publisher = [string]$entry.Publisher
                         }
                     }
                 }
@@ -74,8 +75,13 @@ if ($registeredInnoInstallations.Count -ne 1) {
 }
 $ISCCVersion = $registeredInnoInstallations[0].DisplayVersion
 if ($ISCCVersion -notmatch '^\d+(?:\.\d+){1,3}$' -or
-    $registeredInnoInstallations[0].DisplayName -notmatch [regex]::Escape($ISCCVersion)) {
+    $registeredInnoInstallations[0].DisplayName -cne "Inno Setup version $ISCCVersion" -or
+    $registeredInnoInstallations[0].Publisher -cne "jrsoftware.org") {
     throw "The registered Inno Setup version is missing or inconsistent."
+}
+$ISCCSignature = Get-AuthenticodeSignature -FilePath $ISCC
+if ($ISCCSignature.Status.ToString() -ne "Valid") {
+    throw "The selected Inno Setup compiler does not have a valid Authenticode signature."
 }
 foreach ($requiredPath in @($AppExe, $DistFfmpeg, $Python, $IntegrityScript, $ArtifactCheck, $QtCheck, $TemplatePath)) {
     if (!(Test-Path -LiteralPath $requiredPath -PathType Leaf)) {

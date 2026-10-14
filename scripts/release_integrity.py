@@ -565,13 +565,12 @@ def _generate_base_bom(root: Path, output_path: Path, commit_epoch: int) -> dict
             newline="\n",
         )
         base_path = temp_root / "base.json"
-        executable = Path(sys.executable).with_name("cyclonedx-py.exe")
-        if not executable.is_file():
-            raise ReleaseIntegrityError("Pinned cyclonedx-py.exe was not installed from requirements/build.lock.")
         env = os.environ.copy()
         env["SOURCE_DATE_EPOCH"] = str(commit_epoch)
         command = [
-            str(executable),
+            sys.executable,
+            "-m",
+            "cyclonedx_py",
             "requirements",
             str(package_list),
             "--pyproject",

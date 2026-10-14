@@ -29,6 +29,23 @@ def test_inventory_hash_cli_does_not_require_project_root(tmp_path, monkeypatch,
     )
 
 
+def test_sbom_generator_uses_locked_python_module_cli(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(integrity.sys, "executable", r"C:\Python312\python.exe")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        output_path = Path(command[command.index("--output-file") + 1])
+        output_path.write_text('{"bomFormat":"CycloneDX"}', encoding="utf-8")
+        return integrity.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(integrity.subprocess, "run", fake_run)
+    result = integrity._generate_base_bom(PROJECT_ROOT, tmp_path / "base.json", 123)
+
+    assert result == {"bomFormat": "CycloneDX"}
+    assert calls[0][:3] == [r"C:\Python312\python.exe", "-m", "cyclonedx_py"]
+
+
 def _write_fake_ffmpeg_policy(tmp_path: Path, ffmpeg_path: Path) -> Path:
     trusted = integrity._load_policy(PROJECT_ROOT / "security/artifact_hashes.json")
     policy = {
@@ -406,6 +423,11 @@ def test_inno_build_records_compiler_engine_version_not_file_metadata() -> None:
     content = (PROJECT_ROOT / "build_inno_installer.ps1").read_text(encoding="utf-8")
     assert "DisplayVersion" in content
     assert "InstallLocation" in content
+    assert 'Publisher = [string]$entry.Publisher' in content
+    assert '$registeredInnoInstallations[0].DisplayName -cne "Inno Setup version $ISCCVersion"' in content
+    assert '$registeredInnoInstallations[0].Publisher -cne "jrsoftware.org"' in content
+    assert 'Get-AuthenticodeSignature -FilePath $ISCC' in content
+    assert '$ISCCSignature.Status.ToString() -ne "Valid"' in content
     assert "registeredInnoInstallations.Count -ne 1" in content
     assert "GetVersionInfo($ISCC.FullName)" not in content
 
