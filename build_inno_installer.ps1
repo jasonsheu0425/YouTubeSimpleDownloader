@@ -194,7 +194,8 @@ try {
 
     $compilerStartInfo = [Diagnostics.ProcessStartInfo]::new()
     $compilerStartInfo.FileName = $ISCC
-    $compilerStartInfo.ArgumentList.Add($StagedIss)
+    # Arguments is supported by Windows PowerShell 5.1's .NET Framework runtime.
+    $compilerStartInfo.Arguments = '"' + $StagedIss + '"'
     $compilerStartInfo.UseShellExecute = $false
     $compilerStartInfo.CreateNoWindow = $true
     $compilerStartInfo.RedirectStandardOutput = $true
