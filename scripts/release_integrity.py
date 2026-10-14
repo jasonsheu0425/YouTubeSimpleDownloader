@@ -910,6 +910,7 @@ def build_provenance_document(
     root: Path,
     installer_path: Path,
     sbom_path: Path,
+    staged_installer_script_path: Path,
     dist_dir: Path,
     ffmpeg_path: Path,
     policy_path: Path,
@@ -935,6 +936,8 @@ def build_provenance_document(
     policy, ffmpeg_version_line = verify_ffmpeg(ffmpeg_path, policy_path)
     if not installer_path.is_file() or not sbom_path.is_file():
         raise ReleaseIntegrityError("Installer and SBOM must both exist before provenance is recorded.")
+    if not staged_installer_script_path.is_file():
+        raise ReleaseIntegrityError("The exact staged Inno script must exist before provenance is recorded.")
     try:
         sbom_document = json.loads(sbom_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -982,7 +985,7 @@ def build_provenance_document(
 
     document = {
         "$schema": PROVENANCE_SCHEMA.as_posix(),
-        "schema_version": 1,
+        "schema_version": 2,
         "record_type": "ytsd-local-release-build-integrity-record",
         "unsigned": True,
         "application": {
@@ -1007,7 +1010,8 @@ def build_provenance_document(
         },
         "toolchain": toolchain,
         "inputs": {
-            name: _input_hashes(root, paths) for name, paths in input_paths.items()
+            **{name: _input_hashes(root, paths) for name, paths in input_paths.items()},
+            "staged_installer_script_sha256": sha256_file(staged_installer_script_path),
         },
         "ffmpeg": {
             "version": policy["version"],
@@ -1057,6 +1061,7 @@ def verify_provenance_artifacts(
     dist_dir: Path,
     ffmpeg_path: Path,
     policy_path: Path,
+    staged_installer_script_path: Path | None = None,
     check_source: bool = True,
 ) -> None:
     _schema_validate_provenance(document, root)
@@ -1105,8 +1110,14 @@ def verify_provenance_artifacts(
     expected_inputs = {
         name: _input_hashes(root, paths) for name, paths in _provenance_input_paths().items()
     }
-    if document["inputs"] != expected_inputs:
+    if any(document["inputs"].get(name) != values for name, values in expected_inputs.items()):
         raise ReleaseIntegrityError("Provenance dependency/build input inventory or hashes differ from the source tree.")
+    staged_script_hash = document["inputs"]["staged_installer_script_sha256"]
+    if staged_installer_script_path is not None:
+        if not staged_installer_script_path.is_file():
+            raise ReleaseIntegrityError("The staged Inno script is missing during provenance verification.")
+        if sha256_file(staged_installer_script_path) != staged_script_hash:
+            raise ReleaseIntegrityError("Staged installer script SHA-256 differs from the provenance record.")
     if check_source:
         source = verify_source_tree(root)
         if source["commit"] != document["source"]["commit"] or source["tree"] != document["source"]["tree"]:
@@ -1229,12 +1240,15 @@ def _run_self_test(root: Path) -> None:
 
             provenance_installer = temp_root / "fixture-installer.exe"
             provenance_installer.write_bytes(b"fixture-installer")
+            provenance_iss = temp_root / "fixture.iss"
+            provenance_iss.write_text("[Setup]\nAppName=Fixture\n", encoding="utf-8")
             provenance_sbom = temp_root / "fixture.sbom.cdx.json"
             _write_json_exclusive(provenance_sbom, sbom)
             provenance = build_provenance_document(
                 root=root,
                 installer_path=provenance_installer,
                 sbom_path=provenance_sbom,
+                staged_installer_script_path=provenance_iss,
                 dist_dir=dist,
                 ffmpeg_path=ffmpeg,
                 policy_path=fake_policy_path,
@@ -1257,8 +1271,27 @@ def _run_self_test(root: Path) -> None:
                 dist_dir=dist,
                 ffmpeg_path=ffmpeg,
                 policy_path=fake_policy_path,
+                staged_installer_script_path=provenance_iss,
                 check_source=True,
             )
+            provenance_iss.write_text("[Setup]\nAppName=Changed Fixture\n", encoding="utf-8")
+            try:
+                verify_provenance_artifacts(
+                    provenance,
+                    root=root,
+                    installer_path=provenance_installer,
+                    sbom_path=provenance_sbom,
+                    dist_dir=dist,
+                    ffmpeg_path=ffmpeg,
+                    policy_path=fake_policy_path,
+                    staged_installer_script_path=provenance_iss,
+                    check_source=True,
+                )
+            except ReleaseIntegrityError:
+                pass
+            else:
+                raise ReleaseIntegrityError("Provenance tamper check did not reject a changed staged Inno script.")
+            provenance_iss.write_text("[Setup]\nAppName=Fixture\n", encoding="utf-8")
             provenance_installer.write_bytes(b"tampered-installer")
             try:
                 verify_provenance_artifacts(
@@ -1269,6 +1302,7 @@ def _run_self_test(root: Path) -> None:
                     dist_dir=dist,
                     ffmpeg_path=ffmpeg,
                     policy_path=fake_policy_path,
+                    staged_installer_script_path=provenance_iss,
                     check_source=True,
                 )
             except ReleaseIntegrityError:
@@ -1299,6 +1333,7 @@ def main() -> int:
     provenance_parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     provenance_parser.add_argument("--installer", type=Path, required=True)
     provenance_parser.add_argument("--sbom", type=Path, required=True)
+    provenance_parser.add_argument("--staged-installer-script", type=Path, required=True)
     provenance_parser.add_argument("--dist-dir", type=Path, required=True)
     provenance_parser.add_argument("--ffmpeg", type=Path, required=True)
     provenance_parser.add_argument("--output", type=Path, required=True)
@@ -1318,6 +1353,11 @@ def main() -> int:
     verify_parser.add_argument("--provenance", type=Path, required=True)
     verify_parser.add_argument("--ffmpeg", type=Path, required=True)
     verify_parser.add_argument("--dist-dir", type=Path, required=True)
+    verify_parser.add_argument(
+        "--staged-installer-script",
+        type=Path,
+        help="Optionally re-hash the generated Inno script while the local staging directory is available.",
+    )
 
     self_test_parser = subparsers.add_parser("self-test", help="Run schema and tamper checks with generated fixture bytes.")
     self_test_parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
@@ -1350,6 +1390,7 @@ def main() -> int:
                 root=root,
                 installer_path=args.installer.resolve(),
                 sbom_path=args.sbom.resolve(),
+                staged_installer_script_path=args.staged_installer_script.resolve(),
                 dist_dir=args.dist_dir.resolve(),
                 ffmpeg_path=args.ffmpeg.resolve(),
                 policy_path=root / "security/artifact_hashes.json",
@@ -1368,6 +1409,7 @@ def main() -> int:
                 dist_dir=args.dist_dir.resolve(),
                 ffmpeg_path=args.ffmpeg.resolve(),
                 policy_path=root / "security/artifact_hashes.json",
+                staged_installer_script_path=args.staged_installer_script.resolve(),
             )
             print(f"Local build provenance validated: {args.output.name}.")
         elif args.command == "verify":
@@ -1383,6 +1425,9 @@ def main() -> int:
                 dist_dir=args.dist_dir.resolve(),
                 ffmpeg_path=args.ffmpeg.resolve(),
                 policy_path=root / "security/artifact_hashes.json",
+                staged_installer_script_path=(
+                    args.staged_installer_script.resolve() if args.staged_installer_script else None
+                ),
             )
             print("Release integrity sidecars and artifact hashes verified.")
         elif args.command == "self-test":

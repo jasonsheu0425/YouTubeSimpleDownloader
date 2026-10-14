@@ -155,6 +155,12 @@ function Assert-ValidSignature([string]$Path, [string]$ExpectedSubject, [string]
     return $signature
 }
 
+$PromotedInstaller = $false
+$PromotedSbom = $false
+$PromotedProvenance = $false
+$PromotedCertificate = $false
+$PromotionVerified = $false
+
 try {
     Export-Certificate -Cert $cert -FilePath (Join-Path $AssetsDir $CertificateFile) | Out-Null
     Set-AuthenticodeSignature -FilePath $AppExe -Certificate $cert -HashAlgorithm SHA256 | Out-Null
@@ -244,6 +250,7 @@ try {
         --project-root $ProjectDir `
         --installer $StagedInstaller `
         --sbom $StagedSbom `
+        --staged-installer-script $StagedIss `
         --dist-dir $PayloadDir `
         --ffmpeg $PayloadFfmpeg `
         --output $StagedProvenance `
@@ -257,13 +264,29 @@ try {
         --certificate-thumbprint $cert.Thumbprint
     if ($LASTEXITCODE -ne 0) { throw "Provenance generation/validation failed with exit code $LASTEXITCODE." }
 
+    & $Python $IntegrityScript verify `
+        --project-root $ProjectDir `
+        --installer $StagedInstaller `
+        --sbom $StagedSbom `
+        --provenance $StagedProvenance `
+        --ffmpeg $PayloadFfmpeg `
+        --dist-dir $PayloadDir `
+        --staged-installer-script $StagedIss
+    if ($LASTEXITCODE -ne 0) { throw "Staged release integrity verification failed with exit code $LASTEXITCODE." }
+
     foreach ($destination in @($InstallerPath, $SbomPath, $ProvenancePath, $CertPath)) {
         if (Test-Path -LiteralPath $destination) { throw "Refusing to overwrite a release output: $([IO.Path]::GetFileName($destination))" }
     }
-    Move-Item -LiteralPath $StagedInstaller -Destination $InstallerPath
     Move-Item -LiteralPath $StagedSbom -Destination $SbomPath
+    $PromotedSbom = $true
     Move-Item -LiteralPath $StagedProvenance -Destination $ProvenancePath
+    $PromotedProvenance = $true
     Move-Item -LiteralPath $StagedCertificate -Destination $CertPath
+    $PromotedCertificate = $true
+    # The installer is the visible success artifact, so promote it only after
+    # the staged installer, SBOM, provenance, signature, and ISS digest pass.
+    Move-Item -LiteralPath $StagedInstaller -Destination $InstallerPath
+    $PromotedInstaller = $true
 
     & $Python $IntegrityScript verify `
         --project-root $ProjectDir `
@@ -271,10 +294,12 @@ try {
         --sbom $SbomPath `
         --provenance $ProvenancePath `
         --ffmpeg $PayloadFfmpeg `
-        --dist-dir $PayloadDir
+        --dist-dir $PayloadDir `
+        --staged-installer-script $StagedIss
     if ($LASTEXITCODE -ne 0) { throw "Final release sidecar verification failed with exit code $LASTEXITCODE." }
     $null = Assert-ValidSignature $AppExe $Subject $cert.Thumbprint
     $null = Assert-ValidSignature $InstallerPath $Subject $cert.Thumbprint
+    $PromotionVerified = $true
 
     $resolvedOutput = [IO.Path]::GetFullPath($OutputDir).TrimEnd('\') + '\'
     $resolvedStage = [IO.Path]::GetFullPath($StagingRoot)
@@ -282,7 +307,12 @@ try {
         [IO.Path]::GetFileName($resolvedStage) -notmatch '^\.staging-[0-9a-f]{32}$') {
         throw "Refusing to remove an unexpected installer staging path."
     }
-    Remove-Item -LiteralPath $resolvedStage -Recurse -Force
+    try {
+        Remove-Item -LiteralPath $resolvedStage -Recurse -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Validated release outputs, but staging cleanup was incomplete; inspect: $resolvedStage"
+    }
 
     Write-Host "Inno Setup: $ISCCVersion"
     Write-Host "Signer: $($cert.Subject)"
@@ -292,7 +322,26 @@ try {
     Write-Host "Signature status: Valid"
 }
 catch {
-    Write-Error $_
+    $buildFailure = $_
+    if (!$PromotionVerified) {
+        $rollback = @(
+            [pscustomobject]@{ Promoted = $PromotedInstaller; Final = $InstallerPath; Staged = $StagedInstaller },
+            [pscustomobject]@{ Promoted = $PromotedCertificate; Final = $CertPath; Staged = $StagedCertificate },
+            [pscustomobject]@{ Promoted = $PromotedProvenance; Final = $ProvenancePath; Staged = $StagedProvenance },
+            [pscustomobject]@{ Promoted = $PromotedSbom; Final = $SbomPath; Staged = $StagedSbom }
+        )
+        foreach ($item in $rollback) {
+            if ($item.Promoted -and (Test-Path -LiteralPath $item.Final -PathType Leaf)) {
+                try {
+                    Move-Item -LiteralPath $item.Final -Destination $item.Staged -ErrorAction Stop
+                }
+                catch {
+                    Write-Warning "Could not return promoted output to staging: $([IO.Path]::GetFileName($item.Final))"
+                }
+            }
+        }
+    }
+    Write-Error $buildFailure
     Write-Host "Build staging retained for inspection: $StagingRoot"
     throw
 }

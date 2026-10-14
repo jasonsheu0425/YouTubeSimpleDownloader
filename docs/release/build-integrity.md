@@ -26,13 +26,19 @@ For an installer named `<name>.exe`, the installer build emits:
 - `<name>.provenance.json`: a schema-validated local build record containing
   the clean source commit/tree, dependency lock and build-input hashes,
   Windows/Python/toolchain identity, FFmpeg facts, installer filename/size/
-  SHA-256, staged bundle inventory digest/file count, SBOM SHA-256, and
-  Authenticode status/signer/certificate thumbprint.
+  SHA-256, staged bundle inventory digest/file count, SBOM SHA-256, the exact
+  generated Inno script SHA-256, and Authenticode status/signer/certificate
+  thumbprint. The generated script's contents and machine-specific paths are
+  not copied into the provenance record.
 
 The sidecars are not embedded into the installer. The SBOM does not hash the
 installer, and the provenance record hashes the installer and SBOM but never
-itself, avoiding circular artifact hashes. The Inno build stages and validates
-all outputs before promoting the installer and sidecars into `release/`.
+itself, avoiding circular artifact hashes. The Inno build re-hashes the exact
+generated `.iss` file and validates the complete staged installer/SBOM/
+provenance set before promotion. It promotes the sidecars and public
+certificate first, then the installer last as the visible success artifact;
+any caught failure before final verification returns promoted files to the
+retained staging directory.
 
 ## Verification
 
@@ -62,6 +68,14 @@ python scripts/release_integrity.py verify `
   --ffmpeg dist\YouTubeSimpleDownloader\_internal\ffmpeg\ffmpeg.exe `
   --dist-dir dist\YouTubeSimpleDownloader
 ```
+
+To re-check the generated Inno input during the active local build, also pass
+`--staged-installer-script <path-to-staged-YouTubeSimpleDownloader.iss>`. That
+path exists only in the temporary staging tree and is intentionally not
+serialized into release metadata. Once staging is removed, the provenance
+still records the input digest, while independent post-build verification can
+validate the record and final artifact hashes without claiming to reproduce
+the temporary path-dependent script.
 
 PowerShell additionally verifies the Authenticode signatures and expected
 signer before and after promotion. The project's self-signed test certificate

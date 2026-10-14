@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -316,8 +317,10 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
     )
 
     installer = tmp_path / "candidate.exe"
+    staged_iss = tmp_path / "staged-installer.iss"
     sbom = tmp_path / "candidate.sbom.cdx.json"
     installer.write_bytes(b"signed candidate")
+    staged_iss.write_text(f"[Setup]\nSourceRoot={tmp_path}\n", encoding="utf-8")
     epoch = int(integrity._git(PROJECT_ROOT, "show", "-s", "--format=%ct", source))
     bom = integrity.build_sbom_document(
         _base_bom(),
@@ -335,6 +338,7 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
         root=PROJECT_ROOT,
         installer_path=installer,
         sbom_path=sbom,
+        staged_installer_script_path=staged_iss,
         dist_dir=dist,
         ffmpeg_path=ffmpeg,
         policy_path=policy_path,
@@ -350,6 +354,9 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
         },
     )
     assert record["toolchain"]["inno_setup"] == "6.5.4"
+    assert record["schema_version"] == 2
+    assert re.fullmatch(r"[A-F0-9]{64}", record["inputs"]["staged_installer_script_sha256"])
+    assert str(staged_iss) not in json.dumps(record)
     verify = lambda: integrity.verify_provenance_artifacts(
         record,
         root=PROJECT_ROOT,
@@ -358,6 +365,7 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
         dist_dir=dist,
         ffmpeg_path=ffmpeg,
         policy_path=policy_path,
+        staged_installer_script_path=staged_iss,
         check_source=False,
     )
     original_pip = record["toolchain"]["pip"]
@@ -365,6 +373,12 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
     with pytest.raises(integrity.ReleaseIntegrityError, match="toolchain versions"):
         verify()
     record["toolchain"]["pip"] = original_pip
+    verify()
+    original_iss = staged_iss.read_bytes()
+    staged_iss.write_bytes(b"[Setup]\nSourceRoot=changed\n")
+    with pytest.raises(integrity.ReleaseIntegrityError, match="Staged installer script SHA-256"):
+        verify()
+    staged_iss.write_bytes(original_iss)
     verify()
     original_bundle_hash = record["artifacts"]["bundle"]["inventory_sha256"]
     record["artifacts"]["bundle"]["inventory_sha256"] = "0" * 64
@@ -389,6 +403,7 @@ def test_provenance_refuses_non_valid_signature_status() -> None:
             root=PROJECT_ROOT,
             installer_path=PROJECT_ROOT / "missing.exe",
             sbom_path=PROJECT_ROOT / "missing.sbom.cdx.json",
+            staged_installer_script_path=PROJECT_ROOT / "missing.iss",
             dist_dir=PROJECT_ROOT / "missing-dist",
             ffmpeg_path=PROJECT_ROOT / "missing-ffmpeg.exe",
             policy_path=PROJECT_ROOT / "security/artifact_hashes.json",
@@ -437,6 +452,25 @@ def test_inno_build_records_compiler_engine_version_not_file_metadata() -> None:
     assert '$compiledISCCVersion -cne $ISCCVersion' in content
     assert "registeredInnoInstallations.Count -ne 1" in content
     assert "GetVersionInfo($ISCC.FullName)" not in content
+
+
+def test_inno_build_validates_staged_outputs_and_promotes_installer_last() -> None:
+    content = (PROJECT_ROOT / "build_inno_installer.ps1").read_text(encoding="utf-8")
+    staged_verify = content.index("& $Python $IntegrityScript verify")
+    first_promotion = content.index("Move-Item -LiteralPath $StagedSbom")
+    assert staged_verify < first_promotion
+    assert content.count("--staged-installer-script $StagedIss") >= 3
+    sbom_promotion = first_promotion
+    provenance_promotion = content.index("Move-Item -LiteralPath $StagedProvenance")
+    certificate_promotion = content.index("Move-Item -LiteralPath $StagedCertificate")
+    installer_promotion = content.index("Move-Item -LiteralPath $StagedInstaller")
+    assert sbom_promotion < provenance_promotion < certificate_promotion < installer_promotion
+    assert content.index("& $Python $IntegrityScript verify", installer_promotion) > installer_promotion
+    assert "$PromotionVerified = $true" in content
+    assert "Move-Item -LiteralPath $item.Final -Destination $item.Staged -ErrorAction Stop" in content
+    assert "Validated release outputs, but staging cleanup was incomplete" in content
+    assert "Remove-Item -LiteralPath $resolvedStage -Recurse -Force -ErrorAction Stop" in content
+    assert "Staged installer script SHA-256" in content or "staged-installer-script" in content
 
 
 def test_integrity_sidecar_writer_refuses_overwrite(tmp_path: Path) -> None:

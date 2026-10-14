@@ -20,7 +20,7 @@
   ],
   "properties": {
     "$schema": { "const": "security/release_provenance.schema.json" },
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "record_type": { "const": "ytsd-local-release-build-integrity-record" },
     "unsigned": { "const": true },
     "application": {
@@ -76,11 +76,12 @@
     "inputs": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["dependency_locks_sha256", "requirement_manifests_sha256", "build_inputs_sha256"],
+      "required": ["dependency_locks_sha256", "requirement_manifests_sha256", "build_inputs_sha256", "staged_installer_script_sha256"],
       "properties": {
         "dependency_locks_sha256": { "$ref": "#/$defs/hashMap" },
         "requirement_manifests_sha256": { "$ref": "#/$defs/hashMap" },
-        "build_inputs_sha256": { "$ref": "#/$defs/hashMap" }
+        "build_inputs_sha256": { "$ref": "#/$defs/hashMap" },
+        "staged_installer_script_sha256": { "type": "string", "pattern": "^[A-F0-9]{64}$" }
       }
     },
     "ffmpeg": {
