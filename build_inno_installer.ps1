@@ -70,12 +70,6 @@ if ([string]::IsNullOrWhiteSpace($QtVersion)) {
 }
 if ([string]::IsNullOrWhiteSpace($QtVersion)) { throw "Unable to identify the bundled Qt version." }
 
-$ISCCVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($ISCC).ProductVersion
-if ([string]::IsNullOrWhiteSpace($ISCCVersion)) {
-    $ISCCVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($ISCC).FileVersion
-}
-if ([string]::IsNullOrWhiteSpace($ISCCVersion)) { throw "Unable to identify the Inno Setup compiler version." }
-
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $StagingRoot = Join-Path $OutputDir ".staging-$([guid]::NewGuid().ToString('N'))"
 if (Test-Path -LiteralPath $StagingRoot) { throw "Staging path collision; refusing to reuse it." }
@@ -153,8 +147,22 @@ try {
     $StagedProvenance = Join-Path $StagingRoot $ProvenanceFile
     $StagedCertificate = Join-Path $AssetsDir $CertificateFile
 
-    & $ISCC $StagedIss
-    if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed with exit code $LASTEXITCODE." }
+    $ISCCOutputLines = @(& $ISCC $StagedIss 2>&1)
+    $ISCCExitCode = $LASTEXITCODE
+    $ISCCOutputText = $ISCCOutputLines -join [Environment]::NewLine
+    if ($ISCCExitCode -ne 0) {
+        $ISCCOutputLines | Select-Object -Last 40 | ForEach-Object { Write-Host $_ }
+        throw "Inno Setup compile failed with exit code $ISCCExitCode."
+    }
+    $ISCCVersionMatches = [regex]::Matches(
+        $ISCCOutputText,
+        '(?m)^Compiler engine version:\s*(?<version>\d+(?:\.\d+)+)\s*$'
+    )
+    if ($ISCCVersionMatches.Count -ne 1) {
+        throw "Unable to uniquely identify the Inno Setup compiler engine version from compiler output."
+    }
+    $ISCCVersion = $ISCCVersionMatches[0].Groups["version"].Value
+    Write-Host "Inno Setup compiler engine version: $ISCCVersion"
     if (!(Test-Path -LiteralPath $StagedInstaller -PathType Leaf)) { throw "Inno Setup did not create the expected installer." }
     Set-AuthenticodeSignature -FilePath $StagedInstaller -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     $installerSignature = Assert-ValidSignature $StagedInstaller $Subject $cert.Thumbprint

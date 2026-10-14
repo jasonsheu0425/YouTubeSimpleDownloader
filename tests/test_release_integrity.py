@@ -332,6 +332,7 @@ def test_provenance_rejects_tampered_installer(tmp_path, monkeypatch) -> None:
             "certificate_thumbprint": "A" * 40,
         },
     )
+    assert record["toolchain"]["inno_setup"] == "6.5.4"
     verify = lambda: integrity.verify_provenance_artifacts(
         record,
         root=PROJECT_ROOT,
@@ -399,6 +400,12 @@ def test_build_script_refuses_existing_outputs_instead_of_deleting_them() -> Non
     assert '".release-venv\\Scripts\\python.exe" -m pip install --require-hashes -r requirements-build.txt' in content
     assert '".venv\\Scripts\\python.exe"' not in content
     assert "rmdir /s /q" not in content.lower()
+
+
+def test_inno_build_records_compiler_engine_version_not_file_metadata() -> None:
+    content = (PROJECT_ROOT / "build_inno_installer.ps1").read_text(encoding="utf-8")
+    assert "Compiler engine version:" in content
+    assert "GetVersionInfo($ISCC.FullName)" not in content
 
 
 def test_integrity_sidecar_writer_refuses_overwrite(tmp_path: Path) -> None:
