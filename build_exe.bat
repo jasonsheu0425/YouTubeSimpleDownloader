@@ -2,7 +2,7 @@
 setlocal
 
 set "PROJECT_DIR=%~dp0"
-set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
+set "PROJECT_ROOT=%PROJECT_DIR:~0,-1%"
 cd /d "%PROJECT_DIR%"
 
 if exist "build" (
@@ -18,7 +18,7 @@ if exist ".release-venv" (
     exit /b 1
 )
 
-C:\Windows\py.exe -3.12 "scripts\release_integrity.py" preflight --project-root "%PROJECT_DIR%"
+C:\Windows\py.exe -3.12 "scripts\release_integrity.py" preflight --project-root "%PROJECT_ROOT%"
 if errorlevel 1 exit /b %errorlevel%
 
 C:\Windows\py.exe -3.12 -m venv .release-venv
@@ -33,7 +33,7 @@ if errorlevel 1 exit /b %errorlevel%
 ".release-venv\Scripts\python.exe" "scripts\check_dependency_locks.py"
 if errorlevel 1 exit /b %errorlevel%
 
-".release-venv\Scripts\python.exe" "scripts\release_integrity.py" preflight --project-root "%PROJECT_DIR%"
+".release-venv\Scripts\python.exe" "scripts\release_integrity.py" preflight --project-root "%PROJECT_ROOT%"
 if errorlevel 1 exit /b %errorlevel%
 
 ".release-venv\Scripts\python.exe" "scripts\check_ffmpeg_artifact.py" "ffmpeg\ffmpeg.exe"
