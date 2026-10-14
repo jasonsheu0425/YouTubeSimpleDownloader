@@ -404,7 +404,9 @@ def test_build_script_refuses_existing_outputs_instead_of_deleting_them() -> Non
 
 def test_inno_build_records_compiler_engine_version_not_file_metadata() -> None:
     content = (PROJECT_ROOT / "build_inno_installer.ps1").read_text(encoding="utf-8")
-    assert "Compiler engine version:" in content
+    assert "DisplayVersion" in content
+    assert "InstallLocation" in content
+    assert "registeredInnoInstallations.Count -ne 1" in content
     assert "GetVersionInfo($ISCC.FullName)" not in content
 
 

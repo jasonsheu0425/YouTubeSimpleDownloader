@@ -45,6 +45,38 @@ $ISCC = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Ob
 if (!$ISCC) {
     throw "ISCC.exe not found. Install Inno Setup 6 first."
 }
+$ISCCInstallDir = [IO.Path]::GetFullPath((Split-Path -Parent $ISCC)).TrimEnd('\')
+$innoUninstallRoots = @(
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+)
+$registeredInnoInstallations = @(
+    foreach ($uninstallRoot in $innoUninstallRoots) {
+        if (Test-Path -LiteralPath $uninstallRoot) {
+            foreach ($entryKey in Get-ChildItem -LiteralPath $uninstallRoot -ErrorAction SilentlyContinue) {
+                $entry = Get-ItemProperty -LiteralPath $entryKey.PSPath -ErrorAction SilentlyContinue
+                if ($entry.DisplayName -like "Inno Setup version *" -and $entry.InstallLocation) {
+                    $registeredDir = [IO.Path]::GetFullPath($entry.InstallLocation).TrimEnd('\')
+                    if ($registeredDir -ieq $ISCCInstallDir) {
+                        [pscustomobject]@{
+                            DisplayName = [string]$entry.DisplayName
+                            DisplayVersion = [string]$entry.DisplayVersion
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
+if ($registeredInnoInstallations.Count -ne 1) {
+    throw "Unable to uniquely match ISCC.exe to an installed Inno Setup registration."
+}
+$ISCCVersion = $registeredInnoInstallations[0].DisplayVersion
+if ($ISCCVersion -notmatch '^\d+(?:\.\d+){1,3}$' -or
+    $registeredInnoInstallations[0].DisplayName -notmatch [regex]::Escape($ISCCVersion)) {
+    throw "The registered Inno Setup version is missing or inconsistent."
+}
 foreach ($requiredPath in @($AppExe, $DistFfmpeg, $Python, $IntegrityScript, $ArtifactCheck, $QtCheck, $TemplatePath)) {
     if (!(Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "Required build input is missing: $([IO.Path]::GetFileName($requiredPath))"
@@ -147,22 +179,8 @@ try {
     $StagedProvenance = Join-Path $StagingRoot $ProvenanceFile
     $StagedCertificate = Join-Path $AssetsDir $CertificateFile
 
-    $ISCCOutputLines = @(& $ISCC $StagedIss 2>&1)
-    $ISCCExitCode = $LASTEXITCODE
-    $ISCCOutputText = $ISCCOutputLines -join [Environment]::NewLine
-    if ($ISCCExitCode -ne 0) {
-        $ISCCOutputLines | Select-Object -Last 40 | ForEach-Object { Write-Host $_ }
-        throw "Inno Setup compile failed with exit code $ISCCExitCode."
-    }
-    $ISCCVersionMatches = [regex]::Matches(
-        $ISCCOutputText,
-        '(?m)^Compiler engine version:\s*(?<version>\d+(?:\.\d+)+)\s*$'
-    )
-    if ($ISCCVersionMatches.Count -ne 1) {
-        throw "Unable to uniquely identify the Inno Setup compiler engine version from compiler output."
-    }
-    $ISCCVersion = $ISCCVersionMatches[0].Groups["version"].Value
-    Write-Host "Inno Setup compiler engine version: $ISCCVersion"
+    & $ISCC $StagedIss
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup compile failed with exit code $LASTEXITCODE." }
     if (!(Test-Path -LiteralPath $StagedInstaller -PathType Leaf)) { throw "Inno Setup did not create the expected installer." }
     Set-AuthenticodeSignature -FilePath $StagedInstaller -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     $installerSignature = Assert-ValidSignature $StagedInstaller $Subject $cert.Thumbprint
