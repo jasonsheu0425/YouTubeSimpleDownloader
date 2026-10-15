@@ -38,6 +38,7 @@ def test_actual_authenticode_is_rechecked(tmp_path, monkeypatch, change):
         assert len(calls) == 2
         assert all("-EncodedCommand" in command for command in calls)
         assert all("-LiteralPath" in base64.b64decode(command[-1]).decode("utf-16-le") for command in calls)
+        assert all("Import-Module (Join-Path $PSHOME" in base64.b64decode(command[-1]).decode("utf-16-le") for command in calls)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows Authenticode API")

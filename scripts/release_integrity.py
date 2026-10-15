@@ -1300,6 +1300,7 @@ def verify_authenticode(document: dict[str, Any], installer: Path, application: 
         literal = str(path.resolve()).replace("'", "''")
         command = (
             "$ErrorActionPreference='Stop'; "
+            "Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop; "
             f"$s=Get-AuthenticodeSignature -LiteralPath '{literal}'; "
             "@{status=$s.Status.ToString();subject=$s.SignerCertificate.Subject;"
             "thumbprint=$s.SignerCertificate.Thumbprint}|ConvertTo-Json -Compress"

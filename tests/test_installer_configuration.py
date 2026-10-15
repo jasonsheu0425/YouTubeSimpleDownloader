@@ -80,5 +80,6 @@ def test_bundle_receipt_and_signing_order_is_fixed() -> None:
     signer = (INSTALLER_BUILD_SCRIPT.parent / "scripts/sign_release_executable.ps1").read_text(encoding="utf-8")
     assert 'Set-AuthenticodeSignature -LiteralPath $resolved' in signer
     assert 'Get-AuthenticodeSignature -LiteralPath $resolved' in signer
+    assert "Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1')" in signer
     assert '$SignerScript -Mode Verify -Path $AppExe' in builder
     assert '$null = Assert-ValidSignature (Join-Path $PayloadDir "$AppName.exe")' in builder

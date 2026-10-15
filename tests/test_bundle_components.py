@@ -197,12 +197,14 @@ def test_all_native_files_require_hash_matched_wheel_or_python_owner(tmp_path, m
     }
     qt = by_path["_internal/PySide6/Qt6Widgets.dll"]
     assert qt["version"] == "6.10.1"
-    assert qt["licenses"] == [{"expression": "LGPL-3.0-only"}]
+    assert "licenses" not in qt
+    assert any(prop == {"name": "ytsd:owner-declared-licenses", "value": '[{"expression":"LGPL-3.0-only"}]'}
+               for prop in qt["properties"])
     assert any(prop == {"name": "ytsd:source-origin", "value": "installed wheel PySide6-Essentials/PySide6/Qt6Widgets.dll"}
                for prop in qt["properties"])
-    assert by_path["_internal/_sqlite3.pyd"]["licenses"] == [
-        {"license": {"name": "Python Software Foundation License Version 2"}}
-    ]
+    assert "licenses" not in by_path["_internal/_sqlite3.pyd"]
+    assert any(prop["name"] == "ytsd:owner-declared-licenses" and "Python Software Foundation" in prop["value"]
+               for prop in by_path["_internal/_sqlite3.pyd"]["properties"])
     assert str(tmp_path) not in str(components)
 
     (payload / "PySide6" / "Qt6Widgets.dll").write_bytes(b"changed bytes")

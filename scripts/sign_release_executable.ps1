@@ -5,6 +5,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# A cmd-launched Windows PowerShell can inherit Core's incompatible module path.
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -Force -ErrorAction Stop
 $Subject = 'CN=Jason YouTube Simple Downloader Test Signing'
 $resolved = [IO.Path]::GetFullPath($Path)
 if (!(Test-Path -LiteralPath $resolved -PathType Leaf)) {

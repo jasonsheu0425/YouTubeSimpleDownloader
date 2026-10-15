@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata as metadata
+import json
 import os
 import re
 import subprocess
@@ -358,10 +359,16 @@ def _native_components(
         }
         if version is not None:
             component["version"] = version
+        # Wheel ownership is evidence of distribution, not a license grant for
+        # every included third-party native file (for example MSVC runtimes).
         if licenses:
-            component["licenses"] = licenses
-        else:
-            component["properties"].append({"name": "ytsd:license-status", "value": "no owner license evidence"})
+            component["properties"].append({
+                "name": "ytsd:owner-declared-licenses",
+                "value": json.dumps(licenses, sort_keys=True, separators=(",", ":")),
+            })
+        component["properties"].append({
+            "name": "ytsd:license-status", "value": "native-file license not independently established",
+        })
         components.append(component)
     return components
 

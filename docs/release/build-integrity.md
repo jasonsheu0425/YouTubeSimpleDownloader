@@ -45,6 +45,10 @@ For an installer named `<name>.exe`, the installer build emits:
   and bytes against the installed wheel, CPython, or Windows runtime. Unknown
   and ambiguous owners are rejected; unavailable license/version evidence is
   recorded explicitly instead of inferred from an unrelated component.
+  A native file's owner-declared licenses are evidence about its distribution,
+  not a claim that every DLL included in that wheel shares those licenses.
+  Native-file licensing is explicitly not independently established; in
+  particular, MSVC DLLs do not inherit Qt's license expression.
 - `<name>.provenance.json`: a schema-validated version 3 local build record containing
   the clean source commit/tree, dependency lock and build-input hashes,
   Windows/Python/toolchain identity, FFmpeg facts, installer filename/size/
@@ -108,6 +112,9 @@ The `write-provenance` and `verify` commands independently query Windows
 Authenticode for both actual executables and compare status, subject, and
 certificate thumbprint with the record. They require Windows; portable JSON
 and hash checks alone must not be reported as signature verification.
+The signer and verifier explicitly load the executing PowerShell host's own
+Security module, avoiding incompatible PowerShell Core modules inherited by
+Windows PowerShell through a `cmd.exe` launch.
 
 The producer receipt detects stale bundles and persistent source/environment
 drift between build start and completion. The local build host is trusted:
