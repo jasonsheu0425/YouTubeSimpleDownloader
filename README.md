@@ -4,10 +4,10 @@ A Windows desktop application for saving public YouTube videos and playlists as 
 
 ## Release installer
 
-Release installers are published on the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). For version 0.11.0, the installer filename is:
+Release installers are published on the [GitHub Releases page](https://github.com/jasonsheu0425/YouTubeSimpleDownloader/releases). For version 0.12.0, the installer filename is:
 
 ```text
-YouTubeSimpleDownloader_Setup_v0.11.0-inno-self-signed.exe
+YouTubeSimpleDownloader_Setup_v0.12.0-inno-self-signed.exe
 ```
 
 The installer defaults to the per-user location below and shows the destination page on every run. It does not reuse an older install folder automatically.
@@ -73,7 +73,7 @@ The release installer is self-signed for testing and friend-to-friend sharing. W
 Verify an installer after downloading it:
 
 ```powershell
-Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.11.0-inno-self-signed.exe -Algorithm SHA256
+Get-FileHash .\YouTubeSimpleDownloader_Setup_v0.12.0-inno-self-signed.exe -Algorithm SHA256
 ```
 
 Compare the reported hash with the value in the matching GitHub Release.
@@ -191,7 +191,7 @@ Build the self-signed Inno Setup installer after the EXE bundle is ready:
 Expected installer:
 
 ```text
-release\YouTubeSimpleDownloader_Setup_v0.11.0-inno-self-signed.exe
+release\YouTubeSimpleDownloader_Setup_v0.12.0-inno-self-signed.exe
 ```
 
 The installer builder also emits a CycloneDX SBOM and a local build-integrity

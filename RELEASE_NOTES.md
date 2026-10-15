@@ -1,3 +1,48 @@
+# YouTube Simple Downloader v0.12.0
+
+## v0.12.0 - Maintenance & Build Integrity
+
+### Build and release maintenance
+
+- Python test and release-build environments use committed, resolved Windows
+  CPython 3.12 dependency locks with SHA-256 verification.
+- GitHub Actions use reviewed full commit SHA pins, checked by a repository
+  policy test. The hosted YouTube metadata canary remains manual-only.
+- Releases include a CycloneDX 1.6 SBOM describing the bundled Python runtime,
+  Python packages, Qt, FFmpeg, native files, and relevant build tools, with
+  component identities, declared license evidence, and payload file hashes.
+- An unsigned local provenance JSON records the exact clean source commit,
+  dependency locks, toolchain, signed-bundle receipt, installer and SBOM hashes,
+  FFmpeg policy, and Authenticode signer. It is a local build record, not a
+  cryptographic build attestation or a claim of a hermetic build.
+- Packaging rejects stale source/bundle receipts, unexpected native DLL
+  origins, changed payloads, inconsistent sidecars, and invalid signatures.
+  Artifact verification rechecks actual Windows signatures and exact paths.
+
+### Compatibility
+
+- No new media features or intentional changes to downloads, playlists, Trim
+  Download, Local Clip, history, QSettings, or update-reminder behavior.
+- yt-dlp remains pinned to 2026.08.19. Bundled FFmpeg remains
+  8.1.2-essentials_build-www.gyan.dev with the existing hash policy.
+- Installation remains per-user, non-admin, with the optional current-user
+  Desktop shortcut. The installer uses the existing self-signed test
+  certificate; Windows trust/SmartScreen warnings may still appear.
+
+### Validation disclosure
+
+**MANUAL QA DEFERRED - Authorized by maintainer**
+
+Dedicated-user Windows installation, interactive GUI, and uninstallation
+validation was not completed before publication. Automated regression,
+build-integrity, signature, and artifact checks do not replace that manual QA.
+The remaining obligation is to install the exact published installer under a
+disposable non-admin account; verify launch/version, Chinese and English UI,
+Local Clip probe/ranges/success/cancel/results/history, controlled public MP3
+and MP4 downloads, shortcuts, and uninstall/cleanup. The production user's
+installation, history, Downloads, and HKCU settings must remain untouched.
+No manual installation or GUI result is claimed as PASS for this release.
+
 # YouTube Simple Downloader v0.11.0
 
 ## v0.11.0 - Local Clip

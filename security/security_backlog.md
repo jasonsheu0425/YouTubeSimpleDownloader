@@ -31,10 +31,10 @@ the project is risk-free.
 
 | ID | Priority | Work item | Acceptance criteria | Status |
 | --- | --- | --- | --- | --- |
-| YTSD-SEC-003 | Normal | Hash-lock Python build dependencies | Reviewed direct and transitive dependency constraints include hashes; local and CI builds consume the same constraints; dependency updates remain intentional | Implemented on v0.12.0 maintenance branch; pending merge/release |
+| YTSD-SEC-003 | Normal | Hash-lock Python build dependencies | Reviewed direct and transitive dependency constraints include hashes; local and CI builds consume the same constraints; dependency updates remain intentional | Implemented for v0.12.0 |
 | YTSD-MAINT-001 | Normal | Pin GitHub Actions immutably | Third-party Actions are pinned to reviewed commit SHAs and update notes record the corresponding release versions | Addressed on main before v0.12.0 |
-| YTSD-MAINT-002 | Normal | Generate an SBOM | Each release can produce an SBOM covering bundled Python, Qt, yt-dlp, and FFmpeg components | Implemented on v0.12.0 maintenance branch; pending merge/release |
-| YTSD-MAINT-003 | Normal | Record build provenance | Release records identify source commit, build constraints, FFmpeg policy, artifact hash, and signing method | Implemented on v0.12.0 maintenance branch; pending merge/release |
+| YTSD-MAINT-002 | Normal | Generate an SBOM | Each release can produce an SBOM covering bundled Python, Qt, yt-dlp, and FFmpeg components | Implemented for v0.12.0 |
+| YTSD-MAINT-003 | Normal | Record build provenance | Release records identify source commit, build constraints, FFmpeg policy, artifact hash, and signing method | Implemented for v0.12.0 |
 | YTSD-MAINT-004 | Low | Refresh development tooling advisories | pytest and setuptools constraints are reviewed and updated where compatible; Windows tests remain green | Reviewed for v0.12.0; no verified project-relevant update required |
 | YTSD-MAINT-005 | Low | Document history privacy | Support/security guidance warns that `history.json` contains URLs and full local paths and should be reviewed before sharing | Addressed in v0.9.8 post-release documentation |
 
@@ -54,9 +54,9 @@ the project is risk-free.
   regression coverage.
 - YTSD-MAINT-005 was completed as post-release documentation and did not
   require a history schema or application behavior change.
-- Hash-locked dependency environments and immutable Actions are present on
-  main. SBOM/provenance implementation is on the v0.12.0 maintenance branch
-  and remains pending merge and release; none of this changes historical
-  releases.
+- Hash-locked dependency environments, immutable Actions, and the v0.12.0
+  SBOM/provenance pipeline are implemented. Each new release still requires
+  exact-source CI, fresh signed artifacts, sidecar consistency checks, and
+  public download-back verification; historical releases are unchanged.
 - No post-release blocker is currently recorded here. Future findings should
   still be evaluated on their own evidence and severity.
