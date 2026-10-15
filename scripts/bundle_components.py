@@ -168,6 +168,7 @@ def augment_component_licenses(component: dict[str, Any], distribution_name: str
 
 def parse_ffmpeg_license_output(output: str) -> list[dict[str, Any]]:
     """Accept only FFmpeg's explicit GPL/LGPL redistribution statement."""
+    output = " ".join(output.split())
     match = re.search(
         r"under the terms of the GNU (Lesser )?General Public License.*?"
         r"either version ([23]) of the License, or \(at your option\) any later version",

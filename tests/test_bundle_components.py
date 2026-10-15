@@ -287,6 +287,17 @@ def test_ffmpeg_license_requires_verified_bytes_and_explicit_output(tmp_path, mo
         bundle.parse_ffmpeg_license_output("configuration: --enable-gpl")
 
 
+@pytest.mark.parametrize("separator", ["\n", "\r\n", "\t"])
+def test_ffmpeg_license_accepts_actual_wrapped_redistribution_statement(separator):
+    statement = (
+        "ffmpeg is free software; you can redistribute it and/or modify\n"
+        "it under the terms of the GNU General Public License as published by\n"
+        "the Free Software Foundation; either version 3 of the License, or\n"
+        "(at your option) any later version."
+    ).replace("\n", separator)
+    assert bundle.parse_ffmpeg_license_output(statement) == [{"expression": "GPL-3.0-or-later"}]
+
+
 def test_cpython_license_requires_distribution_text(tmp_path):
     license_file = tmp_path / "LICENSE.txt"
     license_file.write_text("PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2\n", encoding="utf-8")
