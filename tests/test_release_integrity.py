@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import hashlib
 import platform
 import re
@@ -14,6 +15,39 @@ from scripts.check_dependency_locks import parse_lock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("change", [None, "status", "subject", "thumbprint"])
+def test_actual_authenticode_is_rechecked(tmp_path, monkeypatch, change):
+    signing = {"application_exe_status": "Valid", "installer_status": "Valid",
+               "signer_subject": integrity.SIGNER_SUBJECT, "certificate_thumbprint": "A" * 40}
+    actual = {"status": "Valid", "subject": integrity.SIGNER_SUBJECT, "thumbprint": "A" * 40}
+    if change:
+        actual[change] = "mismatch"
+    calls = []
+    def inspect(command, **kwargs):
+        calls.append(command)
+        return integrity.subprocess.CompletedProcess(command, 0, json.dumps(actual), "")
+    monkeypatch.setattr(integrity.sys, "platform", "win32")
+    monkeypatch.setattr(integrity.subprocess, "run", inspect)
+    if change:
+        with pytest.raises(integrity.ReleaseIntegrityError, match="Authenticode"):
+            integrity.verify_authenticode({"signing": signing}, tmp_path / "setup.exe", tmp_path / "app.exe")
+    else:
+        integrity.verify_authenticode({"signing": signing}, tmp_path / "setup.exe", tmp_path / "app.exe")
+        assert len(calls) == 2
+        assert all("-EncodedCommand" in command for command in calls)
+        assert all("-LiteralPath" in base64.b64decode(command[-1]).decode("utf-16-le") for command in calls)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Actual Windows Authenticode API")
+def test_actual_authenticode_rejects_unsigned_fixture(tmp_path):
+    path = tmp_path / "unsigned.[e]xe"
+    path.write_bytes(b"not a signed executable")
+    signing = {"application_exe_status": "Valid", "installer_status": "Valid",
+               "signer_subject": integrity.SIGNER_SUBJECT, "certificate_thumbprint": "A" * 40}
+    with pytest.raises(integrity.ReleaseIntegrityError, match="Authenticode"):
+        integrity.verify_authenticode({"signing": signing}, path, path)
 
 
 @pytest.fixture(autouse=True)
@@ -186,7 +220,8 @@ def test_sbom_lists_runtime_packages_and_hashes_every_bundled_file(tmp_path, mon
     )
 
     assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
-    assert first["metadata"]["component"]["version"] == "0.11.0"
+    version = integrity._load_project(PROJECT_ROOT)[1]
+    assert first["metadata"]["component"]["version"] == version
     assert first["metadata"]["timestamp"].endswith("Z")
     packages = {
         integrity.normalized_name(component["name"]): component["version"]
@@ -208,7 +243,7 @@ def test_sbom_lists_runtime_packages_and_hashes_every_bundled_file(tmp_path, mon
         "pkg:pypi/pyside6@6.10.1"
     ]
     assert "pkg:generic/ffmpeg@8.1.2" in dependency_graph[
-        "pkg:generic/youtube-simple-downloader@0.11.0"
+        f"pkg:generic/youtube-simple-downloader@{version}"
     ]
     file_components = [item for item in first["components"] if item["type"] == "file"]
     paths = {
@@ -524,7 +559,7 @@ def test_inno_build_records_compiler_engine_version_not_file_metadata() -> None:
     assert 'Publisher = [string]$entry.Publisher' in content
     assert '$registeredInnoInstallations[0].DisplayName -cne "Inno Setup version $ISCCVersion"' in content
     assert '$registeredInnoInstallations[0].Publisher -cne "jrsoftware.org"' in content
-    assert 'Get-AuthenticodeSignature -FilePath $ISCC' in content
+    assert 'Get-AuthenticodeSignature -LiteralPath $ISCC' in content
     assert '$ISCCSignature.Status.ToString() -ne "Valid"' in content
     assert '$ISCCSigner -cne "Pyrsys B.V."' in content
     assert "$compilerStartInfo.Arguments = '\"' + $StagedIss + '\"'" in content

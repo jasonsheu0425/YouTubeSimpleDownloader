@@ -40,6 +40,16 @@ the project is risk-free.
 
 ## Scheduling Notes
 
+- The v0.12.0 tooling review is scoped to Windows CI and the Windows onedir/
+  Inno release pipeline, not a claim that every pinned tool is advisory-free.
+  [pytest CVE-2025-71176](https://github.com/pytest-dev/pytest/releases/tag/9.0.3)
+  concerns Unix temporary directories; the pinned pytest is not shipped in
+  the application. [setuptools GHSA-h35f-9h28-mq5c](https://github.com/pypa/setuptools/security/advisories/GHSA-h35f-9h28-mq5c)
+  concerns Unicode exclusions when publishing an sdist on normalization-
+  preserving filesystems. This pipeline publishes neither an sdist nor a
+  macOS artifact. No opportunistic tool upgrade was made; reassess these
+  advisories before adding Unix CI or sdist publication.
+
 - YTSD-SEC-001, YTSD-SEC-002, and YTSD-SEC-004 shipped in v0.9.8 with
   regression coverage.
 - YTSD-MAINT-005 was completed as post-release documentation and did not

@@ -86,7 +86,7 @@ if ($ISCCVersion -notmatch '^\d+(?:\.\d+){1,3}$' -or
     $registeredInnoInstallations[0].Publisher -cne "jrsoftware.org") {
     throw "The registered Inno Setup version is missing or inconsistent."
 }
-$ISCCSignature = Get-AuthenticodeSignature -FilePath $ISCC
+$ISCCSignature = Get-AuthenticodeSignature -LiteralPath $ISCC
 if ($ISCCSignature.Status.ToString() -ne "Valid") {
     throw "The selected Inno Setup compiler does not have a valid Authenticode signature."
 }
@@ -140,7 +140,7 @@ $PayloadFfmpeg = Join-Path $PayloadDir "_internal\ffmpeg\ffmpeg.exe"
 New-Item -ItemType Directory -Path $AssetsDir, $CompilerOutput, $PayloadDir | Out-Null
 
 function Assert-ValidSignature([string]$Path, [string]$ExpectedSubject, [string]$ExpectedThumbprint) {
-    $signature = Get-AuthenticodeSignature -FilePath $Path
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
     if ($signature.Status.ToString() -ne "Valid") {
         throw "Authenticode verification failed for $([IO.Path]::GetFileName($Path)): $($signature.Status)"
     }
@@ -234,7 +234,7 @@ try {
         throw "Inno Setup compiler output version $compiledISCCVersion does not match registered version $ISCCVersion."
     }
     if (!(Test-Path -LiteralPath $StagedInstaller -PathType Leaf)) { throw "Inno Setup did not create the expected installer." }
-    Set-AuthenticodeSignature -FilePath $StagedInstaller -Certificate $cert -HashAlgorithm SHA256 | Out-Null
+    Set-AuthenticodeSignature -LiteralPath $StagedInstaller -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     $installerSignature = Assert-ValidSignature $StagedInstaller $Subject $cert.Thumbprint
 
     $PayloadInventoryAfter = [string](& $Python -E -s $IntegrityScript inventory-hash --dist-dir $PayloadDir)

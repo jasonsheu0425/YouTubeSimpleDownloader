@@ -27,11 +27,11 @@ if ($Mode -eq 'Sign') {
             -HashAlgorithm SHA256 `
             -NotAfter (Get-Date).AddYears(3)
     }
-    Set-AuthenticodeSignature -FilePath $resolved -Certificate $cert -HashAlgorithm SHA256 | Out-Null
+    Set-AuthenticodeSignature -LiteralPath $resolved -Certificate $cert -HashAlgorithm SHA256 | Out-Null
     $ExpectedThumbprint = $cert.Thumbprint
 }
 
-$signature = Get-AuthenticodeSignature -FilePath $resolved
+$signature = Get-AuthenticodeSignature -LiteralPath $resolved
 if ($signature.Status.ToString() -cne 'Valid' -or !$signature.SignerCertificate) {
     throw 'Application Authenticode signature is not valid.'
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import importlib.metadata
 import json
@@ -1290,6 +1291,38 @@ def _read_signatures(args: argparse.Namespace) -> dict[str, str]:
     }
 
 
+def verify_authenticode(document: dict[str, Any], installer: Path, application: Path) -> None:
+    """Recheck actual artifact signatures, not just the unsigned record claims."""
+    if sys.platform != "win32":
+        raise ReleaseIntegrityError("Actual Authenticode verification requires Windows.")
+    signing = document["signing"]
+    for path, status_key in ((application, "application_exe_status"), (installer, "installer_status")):
+        literal = str(path.resolve()).replace("'", "''")
+        command = (
+            "$ErrorActionPreference='Stop'; "
+            f"$s=Get-AuthenticodeSignature -LiteralPath '{literal}'; "
+            "@{status=$s.Status.ToString();subject=$s.SignerCertificate.Subject;"
+            "thumbprint=$s.SignerCertificate.Thumbprint}|ConvertTo-Json -Compress"
+        )
+        encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        try:
+            actual = json.loads(result.stdout.lstrip("\ufeff"))
+        except (ValueError, TypeError) as exc:
+            raise ReleaseIntegrityError("Authenticode inspection did not return valid evidence.") from exc
+        if (
+            result.returncode or not isinstance(actual, dict) or actual.get("status") != "Valid"
+            or actual.get("status") != signing[status_key]
+            or actual.get("subject") != SIGNER_SUBJECT
+            or actual.get("subject") != signing["signer_subject"]
+            or str(actual.get("thumbprint", "")).upper() != signing["certificate_thumbprint"].upper()
+        ):
+            raise ReleaseIntegrityError("Actual Authenticode status/signer differs from the release record.")
+
+
 def _run_self_test(root: Path) -> None:
     source = verify_source_tree(root)
     commit_epoch = int(_git(root, "show", "-s", "--format=%ct", source["commit"]))
@@ -1547,6 +1580,7 @@ def main() -> int:
                 qt_version=args.qt_version,
                 signing=_read_signatures(args),
             )
+            verify_authenticode(document, args.installer, args.dist_dir / "YouTubeSimpleDownloader.exe")
             _write_json_exclusive(args.output, document)
             verify_provenance_artifacts(
                 document,
@@ -1576,6 +1610,7 @@ def main() -> int:
                     args.staged_installer_script.resolve() if args.staged_installer_script else None
                 ),
             )
+            verify_authenticode(document, args.installer, args.dist_dir / "YouTubeSimpleDownloader.exe")
             print("Release integrity sidecars and artifact hashes verified.")
         elif args.command == "self-test":
             verify_source_tree(root)

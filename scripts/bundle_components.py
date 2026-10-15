@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata as metadata
+import os
 import re
 import subprocess
 import sys
@@ -238,24 +239,73 @@ _NATIVE_NAMES = {
 }
 
 
+def _native_wheel_sources() -> dict[str, list[tuple[metadata.Distribution, str, Path]]]:
+    sources: dict[str, list[tuple[metadata.Distribution, str, Path]]] = {}
+    for distribution in metadata.distributions():
+        for file in distribution.files or []:
+            relative = str(file).replace("\\", "/")
+            if Path(relative).suffix.lower() not in {".dll", ".pyd"}:
+                continue
+            if Path(relative).is_absolute() or ".." in Path(relative).parts or ":" in relative:
+                raise BundleComponentError("Installed wheel has an unsafe native file path")
+            source = Path(distribution.locate_file(file))
+            sources.setdefault(Path(relative).name.lower(), []).append((distribution, relative, source))
+    return sources
+
+
+def _native_owner(
+    relative: str, digest: str,
+    wheel_sources: Mapping[str, list[tuple[metadata.Distribution, str, Path]]],
+) -> tuple[str, str, str, list[dict[str, Any]]]:
+    payload = relative.removeprefix("_internal/").lower()
+    filename = Path(relative).name.lower()
+    matches = []
+    for distribution, wheel_path, source in wheel_sources.get(filename, []):
+        if (payload == wheel_path.lower() or payload.endswith("/" + wheel_path.lower())) and source.is_file() and _hash(source) == digest:
+            matches.append((distribution, wheel_path))
+    if len(matches) != 1:
+        if matches:
+            raise BundleComponentError(f"Ambiguous installed-wheel owner for {relative}")
+        # CPython's DLLs and extension modules are copied from the base runtime.
+        base = Path(sys.base_prefix)
+        for prefix in (base, base / "DLLs"):
+            source = prefix / filename
+            if source.is_file() and _hash(source) == digest:
+                licenses = [] if filename in _NATIVE_NAMES else cpython_license_from_distribution(base / "LICENSE.txt")
+                return (
+                    "CPython", sys.version.split()[0],
+                    f"CPython distribution/{source.relative_to(base).as_posix()}", licenses,
+                )
+        # A few MSVC/UCRT files are collected from Windows rather than a wheel.
+        system_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        source = system_root / "System32" / filename
+        if source.is_file() and _hash(source) == digest:
+            return ("Windows runtime", "", "Windows/System32/" + filename, [])
+        raise BundleComponentError(f"Unattributed native bundle file: {relative}")
+    distribution, wheel_path = matches[0]
+    name = distribution.metadata["Name"]
+    return (name, distribution.version, f"installed wheel {name}/{wheel_path}", _license(distribution))
+
+
 def _native_components(
     dist_dir: Path, native_evidence: Mapping[str, Mapping[str, Any]] | None = None
 ) -> list[dict[str, Any]]:
     components = []
-    for path in sorted(dist_dir.rglob("*.dll")):
-        family = _NATIVE_NAMES.get(path.name.lower())
-        if family is None:
+    wheel_sources = _native_wheel_sources()
+    for path in sorted(dist_dir.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".dll", ".pyd"}:
             continue
         relative = path.relative_to(dist_dir).as_posix()
         digest = _hash(path)
+        owner, owner_version, source_origin, licenses = _native_owner(relative, digest, wheel_sources)
+        family = _NATIVE_NAMES.get(path.name.lower(), _normalize(owner))
         version_source = "PE VS_FIXEDFILEINFO"
         version_status = "observed in PE"
-        origin = None
         try:
             product, version = _native_info(path)
         except MissingNativeVersionError:
             receipt = (native_evidence or {}).get(relative, {})
-            if (
+            if path.name.lower() == "libffi-8.dll" and (
                 receipt.get("approved") is not True
                 or str(receipt.get("sha256", "")).lower() != digest
                 or str(receipt.get("source_sha256", "")).lower() != digest
@@ -266,20 +316,25 @@ def _native_components(
                 or ":" in receipt["origin"]
             ):
                 raise BundleComponentError(f"Native binary has no approved version evidence: {relative}") from None
-            origin = receipt["origin"]
-            version = receipt.get("version")
-            if version is None:
+            if path.name.lower() == "libffi-8.dll":
+                version = receipt.get("version")
+                version_status = "approved by hash-bound receipt"
+            else:
+                version = owner_version or None
+                version_source = "hash-matched owner distribution"
+                version_status = "owner version; PE version unavailable"
+            if path.name.lower() == "libffi-8.dll" and version is None:
                 if (
-                    path.name.lower() != "libffi-8.dll"
-                    or receipt.get("version_unavailable") is not True
-                    or not re.fullmatch(r"CPython ?\d+\.\d+\.\d+(?:\.\d+)? distribution", origin)
+                    receipt.get("version_unavailable") is not True
+                    or not re.fullmatch(r"CPython ?\d+\.\d+\.\d+(?:\.\d+)? distribution", receipt["origin"])
                 ):
                     raise BundleComponentError(f"Unversioned native evidence is not approved: {relative}") from None
                 version_status = "unavailable in trusted CPython binary"
-            elif not isinstance(version, str) or not version or receipt.get("version_unavailable") is True:
+            elif path.name.lower() == "libffi-8.dll" and (not isinstance(version, str) or not version or receipt.get("version_unavailable") is True):
                 raise BundleComponentError(f"Native version evidence is malformed: {relative}") from None
             product = ""
-            version_source = "approved hash-bound origin receipt"
+            if path.name.lower() == "libffi-8.dll":
+                version_source = "approved hash-bound origin receipt"
         # Path-qualified identity preserves side-by-side versions and copies.
         identity = f"pkg:generic/{family}/{path.name.lower()}"
         if version is not None:
@@ -296,12 +351,17 @@ def _native_components(
                 {"name": "ytsd:version-status", "value": version_status},
                 {"name": "ytsd:abi-filename", "value": path.name},
                 {"name": "ytsd:component-role", "value": "bundled-native"},
+                {"name": "ytsd:owner", "value": owner},
+                {"name": "ytsd:owner-version", "value": owner_version},
+                {"name": "ytsd:source-origin", "value": source_origin},
             ],
         }
         if version is not None:
             component["version"] = version
-        if origin is not None:
-            component["properties"].append({"name": "ytsd:source-origin", "value": origin})
+        if licenses:
+            component["licenses"] = licenses
+        else:
+            component["properties"].append({"name": "ytsd:license-status", "value": "no owner license evidence"})
         components.append(component)
     return components
 

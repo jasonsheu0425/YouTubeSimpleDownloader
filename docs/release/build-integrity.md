@@ -41,6 +41,10 @@ For an installer named `<name>.exe`, the installer build emits:
   version and records the ABI filename, exact hash and matching Python-runtime
   origin. This is an inventory with declared license evidence, not a complete
   legal review of every native dependency.
+  Every bundled DLL/PYD is additionally assigned an owner by matching its path
+  and bytes against the installed wheel, CPython, or Windows runtime. Unknown
+  and ambiguous owners are rejected; unavailable license/version evidence is
+  recorded explicitly instead of inferred from an unrelated component.
 - `<name>.provenance.json`: a schema-validated version 3 local build record containing
   the clean source commit/tree, dependency lock and build-input hashes,
   Windows/Python/toolchain identity, FFmpeg facts, installer filename/size/
@@ -100,6 +104,18 @@ the temporary path-dependent script.
 PowerShell additionally verifies the Authenticode signatures and expected
 signer before and after promotion. The project's self-signed test certificate
 provides signature integrity but does not imply broad Windows trust.
+The `write-provenance` and `verify` commands independently query Windows
+Authenticode for both actual executables and compare status, subject, and
+certificate thumbprint with the record. They require Windows; portable JSON
+and hash checks alone must not be reported as signature verification.
+
+The producer receipt detects stale bundles and persistent source/environment
+drift between build start and completion. The local build host is trusted:
+endpoint snapshots do not prevent a same-owner attacker from changing and
+restoring inputs during compilation. Frozen Python package ownership is
+inferred from observed archive modules and the locked build environment,
+not a cryptographic source-to-byte proof. These limitations are not a claim
+of a hermetic or independently attested build.
 
 These files are local build records, not signed attestations. Their hashes
 should be checked against the published GitHub asset digests during the

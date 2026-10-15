@@ -75,6 +75,10 @@ def test_bundle_receipt_and_signing_order_is_fixed() -> None:
     assert builder.index('$ReceiptScript verify --project-root $ProjectDir --dist-dir $PayloadDir') < builder.index('$compilerProcess.Start()')
     assert builder.index('$null = Assert-ValidSignature (Join-Path $PayloadDir "$AppName.exe")') < builder.index('$compilerProcess.Start()')
     assert builder.count('Set-AuthenticodeSignature') == 1
-    assert 'Set-AuthenticodeSignature -FilePath $StagedInstaller' in builder
+    assert 'Set-AuthenticodeSignature -LiteralPath $StagedInstaller' in builder
+    assert 'Get-AuthenticodeSignature -LiteralPath $Path' in builder
+    signer = (INSTALLER_BUILD_SCRIPT.parent / "scripts/sign_release_executable.ps1").read_text(encoding="utf-8")
+    assert 'Set-AuthenticodeSignature -LiteralPath $resolved' in signer
+    assert 'Get-AuthenticodeSignature -LiteralPath $resolved' in signer
     assert '$SignerScript -Mode Verify -Path $AppExe' in builder
     assert '$null = Assert-ValidSignature (Join-Path $PayloadDir "$AppName.exe")' in builder

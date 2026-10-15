@@ -12,12 +12,17 @@ from scripts import bundle_components as bundle
 
 
 class Distribution:
-    def __init__(self, name: str, version: str, files: list[str], license_expression: str | None = None):
+    def __init__(self, name: str, version: str, files: list[str], license_expression: str | None = None,
+                 root: Path | None = None):
         self.metadata = {"Name": name}
         if license_expression:
             self.metadata["License-Expression"] = license_expression
         self.version = version
         self.files = [Path(file) for file in files]
+        self.root = root
+
+    def locate_file(self, file):
+        return self.root / file
 
 
 def test_discovers_only_frozen_distributions_and_qualified_vendor(tmp_path, monkeypatch):
@@ -107,6 +112,7 @@ def test_native_component_has_observed_version_hash_and_relative_evidence(tmp_pa
     binary = internal / "libcrypto-3-x64.dll"
     binary.write_bytes(b"PE fixture")
     monkeypatch.setattr(bundle, "_native_info", lambda _path: ("The OpenSSL Toolkit", "3.4.0.0"))
+    monkeypatch.setattr(bundle, "_native_owner", lambda *_args: ("CPython", "3.12.4", "CPython distribution/DLLs/libcrypto-3-x64.dll", []))
 
     components = bundle._native_components(tmp_path)
     assert len(components) == 1
@@ -123,6 +129,7 @@ def test_native_missing_version_fails_instead_of_guessing(tmp_path, monkeypatch)
     internal = tmp_path / "_internal"
     internal.mkdir()
     (internal / "libffi-8.dll").write_bytes(b"no version fixture")
+    monkeypatch.setattr(bundle, "_native_owner", lambda *_args: ("CPython", "3.12.4", "CPython distribution/DLLs/libffi-8.dll", []))
     monkeypatch.setattr(bundle, "_native_info", lambda _path: (_ for _ in ()).throw(
         bundle.MissingNativeVersionError("Native binary has no observed PE version: libffi-8.dll")
     ))
@@ -144,7 +151,7 @@ def test_native_missing_version_fails_instead_of_guessing(tmp_path, monkeypatch)
     props = {prop["name"]: prop["value"] for prop in component["properties"]}
     assert props["ytsd:version-status"] == "unavailable in trusted CPython binary"
     assert props["ytsd:abi-filename"] == "libffi-8.dll"
-    assert props["ytsd:source-origin"] == "CPython3.12.4 distribution"
+    assert props["ytsd:source-origin"] == "CPython distribution/DLLs/libffi-8.dll"
     receipt["_internal/libffi-8.dll"]["source_sha256"] = "0" * 64
     with pytest.raises(bundle.BundleComponentError, match="no approved version evidence"):
         bundle._native_components(tmp_path, receipt)
@@ -160,6 +167,61 @@ def test_native_missing_version_fails_instead_of_guessing(tmp_path, monkeypatch)
     receipt["_internal/libffi-8.dll"]["origin"] = r"C:\Python312\DLLs\libffi-8.dll"
     with pytest.raises(bundle.BundleComponentError, match="no approved version evidence"):
         bundle._native_components(tmp_path, receipt)
+
+
+def test_all_native_files_require_hash_matched_wheel_or_python_owner(tmp_path, monkeypatch):
+    wheel_root = tmp_path / "site-packages"
+    wheel_file = wheel_root / "PySide6" / "Qt6Widgets.dll"
+    wheel_file.parent.mkdir(parents=True)
+    wheel_file.write_bytes(b"Qt wheel bytes")
+    dist = Distribution("PySide6-Essentials", "6.10.1", ["PySide6/Qt6Widgets.dll"],
+                        "LGPL-3.0-only", wheel_root)
+    monkeypatch.setattr(bundle.metadata, "distributions", lambda: [dist])
+    base = tmp_path / "Python312"
+    (base / "DLLs").mkdir(parents=True)
+    (base / "DLLs" / "_sqlite3.pyd").write_bytes(b"Python extension bytes")
+    (base / "LICENSE.txt").write_text("PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2", encoding="utf-8")
+    monkeypatch.setattr(bundle.sys, "base_prefix", str(base))
+    payload = tmp_path / "bundle" / "_internal"
+    (payload / "PySide6").mkdir(parents=True)
+    (payload / "PySide6" / "Qt6Widgets.dll").write_bytes(b"Qt wheel bytes")
+    (payload / "_sqlite3.pyd").write_bytes(b"Python extension bytes")
+    monkeypatch.setattr(bundle, "_native_info", lambda _path: (_ for _ in ()).throw(
+        bundle.MissingNativeVersionError("no PE version")))
+
+    components = bundle._native_components(payload.parent)
+    assert len(components) == 2
+    by_path = {
+        next(prop["value"] for prop in item["properties"] if prop["name"] == "ytsd:relative-path"): item
+        for item in components
+    }
+    qt = by_path["_internal/PySide6/Qt6Widgets.dll"]
+    assert qt["version"] == "6.10.1"
+    assert qt["licenses"] == [{"expression": "LGPL-3.0-only"}]
+    assert any(prop == {"name": "ytsd:source-origin", "value": "installed wheel PySide6-Essentials/PySide6/Qt6Widgets.dll"}
+               for prop in qt["properties"])
+    assert by_path["_internal/_sqlite3.pyd"]["licenses"] == [
+        {"license": {"name": "Python Software Foundation License Version 2"}}
+    ]
+    assert str(tmp_path) not in str(components)
+
+    (payload / "PySide6" / "Qt6Widgets.dll").write_bytes(b"changed bytes")
+    with pytest.raises(bundle.BundleComponentError, match="Unattributed native bundle file"):
+        bundle._native_components(payload.parent)
+
+
+def test_ambiguous_native_wheel_owners_fail(tmp_path, monkeypatch):
+    wheel_root = tmp_path / "site-packages"
+    source = wheel_root / "shared.dll"
+    source.parent.mkdir()
+    source.write_bytes(b"same bytes")
+    owners = [Distribution(name, "1.0", ["shared.dll"], root=wheel_root) for name in ("first", "second")]
+    monkeypatch.setattr(bundle.metadata, "distributions", lambda: owners)
+    payload = tmp_path / "bundle" / "_internal"
+    payload.mkdir(parents=True)
+    (payload / "shared.dll").write_bytes(b"same bytes")
+    with pytest.raises(bundle.BundleComponentError, match="Ambiguous installed-wheel owner"):
+        bundle._native_components(payload.parent)
 
 
 def test_license_augmentation_uses_installed_metadata_and_checks_version(monkeypatch):
