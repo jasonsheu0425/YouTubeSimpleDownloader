@@ -16,20 +16,6 @@ from ytsimpledownloader.time_range import TimeRange
 from ytsimpledownloader.transcoder import TranscodeResult, VideoTranscodeOptions
 
 
-@pytest.fixture
-def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> QSettings:
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.SystemScope, str(tmp_path))
-    settings = QSettings("YouTubeSimpleDownloader", "YouTubeSimpleDownloader")
-    settings.clear()
-    settings.sync()
-    monkeypatch.setattr(app_module, "ensure_default_dirs", lambda: None)
-    monkeypatch.setattr(app_module, "HISTORY_PATH", tmp_path / "history.json")
-    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path)
-    return settings
-
-
 def _source_file(tmp_path: Path) -> Path:
     source = tmp_path / "source.mp4"
     source.write_bytes(b"local clip test source")

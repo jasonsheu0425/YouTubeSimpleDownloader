@@ -14,20 +14,6 @@ from ytsimpledownloader.downloader import VideoInfo
 from ytsimpledownloader.history_store import HistoryLoadResult, HistoryLoadStatus
 
 
-@pytest.fixture
-def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> QSettings:
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.SystemScope, str(tmp_path))
-    settings = QSettings("YouTubeSimpleDownloader", "YouTubeSimpleDownloader")
-    settings.clear()
-    settings.sync()
-    monkeypatch.setattr(app_module, "ensure_default_dirs", lambda: None)
-    monkeypatch.setattr(app_module, "HISTORY_PATH", tmp_path / "history.json")
-    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path)
-    return settings
-
-
 def _unsafe_result(path: Path, status: HistoryLoadStatus) -> HistoryLoadResult:
     return HistoryLoadResult(items=[], status=status, path=path, error=OSError("blocked"))
 

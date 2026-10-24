@@ -20,8 +20,12 @@ from ytsimpledownloader.time_range import TimeRange
 
 
 @pytest.fixture(scope="session")
-def ffmpeg_path() -> str:
+def ffmpeg_path(isolated_user_environment) -> str:
     return ensure_ffmpeg_exe()
+
+
+def test_ffmpeg_cache_is_inside_the_pytest_session(ffmpeg_path: str, isolated_user_environment) -> None:
+    assert Path(ffmpeg_path).resolve().is_relative_to(isolated_user_environment.resolve())
 
 
 @pytest.fixture()
