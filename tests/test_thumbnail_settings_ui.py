@@ -4,27 +4,10 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
-from PySide6.QtCore import QSettings
-
 import ytsimpledownloader.app as app_module
 
 
-@pytest.fixture
-def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path) -> QSettings:
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.SystemScope, str(tmp_path))
-    settings = QSettings("YouTubeSimpleDownloader", "YouTubeSimpleDownloader")
-    settings.clear()
-    settings.sync()
-    monkeypatch.setattr(app_module, "ensure_default_dirs", lambda: None)
-    monkeypatch.setattr(app_module, "HISTORY_PATH", tmp_path / "history.json")
-    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path)
-    return settings
-
-
-def test_thumbnail_setting_defaults_off_and_is_saved(qapp, isolated_settings) -> None:
+def test_thumbnail_setting_defaults_off_and_is_saved(qapp, isolated_settings, isolated_settings_factory) -> None:
     window = app_module.MainWindow()
     try:
         checkbox = window.embed_audio_thumbnail_checkbox
@@ -33,7 +16,7 @@ def test_thumbnail_setting_defaults_off_and_is_saved(qapp, isolated_settings) ->
 
         checkbox.setChecked(True)
         isolated_settings.sync()
-        reloaded = QSettings("YouTubeSimpleDownloader", "YouTubeSimpleDownloader")
+        reloaded = isolated_settings_factory()
         assert str(reloaded.value("embed_audio_thumbnail", "false")).lower() == "true"
     finally:
         window.close()

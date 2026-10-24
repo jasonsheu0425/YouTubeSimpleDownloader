@@ -6,26 +6,11 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication
 
 import ytsimpledownloader.app as app_module
 from ytsimpledownloader.time_range import TimeRange
-
-
-@pytest.fixture
-def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> QSettings:
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.SystemScope, str(tmp_path))
-    settings = QSettings("YouTubeSimpleDownloader", "YouTubeSimpleDownloader")
-    settings.clear()
-    settings.sync()
-    monkeypatch.setattr(app_module, "ensure_default_dirs", lambda: None)
-    monkeypatch.setattr(app_module, "HISTORY_PATH", tmp_path / "history.json")
-    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path)
-    return settings
 
 
 def _set_language(window: app_module.MainWindow, language: str) -> None:
