@@ -119,6 +119,7 @@ jobs:
           python -m pip install --require-hashes -r requirements/bootstrap.lock
           python -m pip install --require-hashes -r requirements-dev.txt
           python -m pip install --require-hashes -r requirements-build.txt
+          python -m pip install --no-deps --no-build-isolation -e .
       - name: Verify dependency and Actions policies
         run: |
           python scripts/check_dependency_locks.py

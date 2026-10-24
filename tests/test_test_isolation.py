@@ -50,6 +50,15 @@ def test_repository_passes_precollection_isolation_policy() -> None:
     assert verify_test_isolation(PROJECT_ROOT) > 30
 
 
+def test_release_tooling_job_installs_application_after_locked_dependencies() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+    job = workflow.split("\n  release-integrity-tooling:", 1)[1]
+    dependencies = job.index("python -m pip install --require-hashes -r requirements-build.txt")
+    application = job.index("python -m pip install --no-deps --no-build-isolation -e .")
+    tests = job.index("python -m pytest tests/test_release_integrity.py tests/test_bundle_components.py")
+    assert dependencies < application < tests
+
+
 def test_precollection_guard_rejects_unsafe_module_before_its_code_runs(tmp_path: Path) -> None:
     project = tmp_path / "mini-project"
     tests = project / "tests"
