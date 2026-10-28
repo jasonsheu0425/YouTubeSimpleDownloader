@@ -101,6 +101,81 @@ def test_local_yt_dlp_output_identity(
     )
 
 
+@pytest.mark.parametrize("failure", [RuntimeError("ffmpeg failed"), TranscodeCancelled("cancelled")])
+def test_transcode_overwrite_failure_preserves_existing_files(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception,
+) -> None:
+    output_dir = tmp_path / "overwrite-output"
+    output_dir.mkdir()
+    target = output_dir / "sample_h264.mp4"
+    target.write_bytes(b"existing valid output fixture")
+    source_bytes = sample_video.read_bytes()
+    transcoder = VideoTranscoder(ffmpeg_path)
+
+    def fail_after_partial(command: list[str], _duration: float | None) -> str:
+        partial = Path(command[-1])
+        assert partial.suffix == ".mp4" and ".partial-" in partial.name
+        partial.write_bytes(b"incomplete")
+        raise failure
+
+    monkeypatch.setattr(transcoder, "_run_ffmpeg", fail_after_partial)
+    with pytest.raises(type(failure)):
+        transcoder.transcode(
+            sample_video, VideoTranscodeOptions(mode="transcode", keep_original=False),
+            output_dir=output_dir, file_exists_action="overwrite",
+        )
+    assert target.read_bytes() == b"existing valid output fixture"
+    assert sample_video.read_bytes() == source_bytes
+    assert list(output_dir.iterdir()) == [target]
+
+
+def test_transcode_overwrite_replace_failure_preserves_existing_files(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "replace-failure"
+    output_dir.mkdir()
+    target = output_dir / "sample_h264.mp4"
+    target.write_bytes(b"existing valid output fixture")
+    source_bytes = sample_video.read_bytes()
+    transcoder = VideoTranscoder(ffmpeg_path)
+
+    def write_partial(command: list[str], _duration: float | None) -> str:
+        Path(command[-1]).write_bytes(b"new output fixture")
+        return ""
+
+    def fail_replace(_src: Path, _dst: Path) -> None:
+        raise PermissionError("simulated locked destination")
+
+    monkeypatch.setattr(transcoder, "_run_ffmpeg", write_partial)
+    monkeypatch.setattr(transcoder_module.os, "replace", fail_replace)
+    with pytest.raises(PermissionError, match="locked destination"):
+        transcoder.transcode(
+            sample_video, VideoTranscodeOptions(mode="transcode", keep_original=False),
+            output_dir=output_dir, file_exists_action="overwrite",
+        )
+    assert target.read_bytes() == b"existing valid output fixture"
+    assert sample_video.read_bytes() == source_bytes
+    assert list(output_dir.iterdir()) == [target]
+
+
+def test_transcode_overwrite_real_ffmpeg_replaces_after_success(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "overwrite-success"
+    output_dir.mkdir()
+    target = output_dir / "sample_h264.mp4"
+    target.write_bytes(b"previous output fixture")
+    source_bytes = sample_video.read_bytes()
+    result = VideoTranscoder(ffmpeg_path).transcode(
+        sample_video, VideoTranscodeOptions(mode="transcode", keep_original=True),
+        output_dir=output_dir, file_exists_action="overwrite",
+    )
+    assert result.path == target and target.read_bytes() != b"previous output fixture"
+    assert sample_video.read_bytes() == source_bytes
+    assert list(output_dir.iterdir()) == [target]
+    subprocess.run([ffmpeg_path, "-v", "error", "-i", str(target), "-f", "null", "-"], check=True)
+
+
 def test_probe_reads_basic_media_info(sample_video: Path, ffmpeg_path: str) -> None:
     info = probe_media(sample_video, ffmpeg_path)
 
