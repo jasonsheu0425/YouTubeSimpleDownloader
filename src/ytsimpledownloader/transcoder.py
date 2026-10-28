@@ -338,6 +338,10 @@ class VideoTranscoder:
             if not partial_path.is_file() or partial_path.stat().st_size == 0:
                 raise RuntimeError(stderr_tail or "FFmpeg did not create an output file.")
             info = probe_media(partial_path, self.ffmpeg_path)
+            if not info.video_codec:
+                raise RuntimeError(f"Could not verify output video: {info.error or 'no video stream found'}")
+            if self.cancel_event and self.cancel_event.is_set():
+                raise TranscodeCancelled("Transcode cancelled by user.")
             os.replace(partial_path, output_path)
             finalized = True
         finally:
@@ -345,7 +349,13 @@ class VideoTranscoder:
                 self._remove_owned_partial(partial_path)
 
         if not options.keep_original and source.exists() and source.resolve() != output_path.resolve():
-            source.unlink()
+            if self.cancel_event and self.cancel_event.is_set():
+                self._emit("Cancellation observed after output was committed; original file was retained.")
+            else:
+                try:
+                    source.unlink()
+                except OSError as exc:
+                    self._emit(f"Warning: output was committed but original file was retained: {exc}")
 
         info = replace(info, path=output_path)
         self._emit(f"Transcoded: {output_path}")

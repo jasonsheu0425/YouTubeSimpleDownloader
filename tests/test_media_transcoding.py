@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import subprocess
+import sys
 from pathlib import Path
+from threading import Event
 
 import pytest
 from yt_dlp import YoutubeDL
@@ -147,6 +149,14 @@ def test_transcode_overwrite_replace_failure_preserves_existing_files(
         raise PermissionError("simulated locked destination")
 
     monkeypatch.setattr(transcoder, "_run_ffmpeg", write_partial)
+    original_probe = transcoder_module.probe_media
+    monkeypatch.setattr(
+        transcoder_module, "probe_media",
+        lambda path, ffmpeg: (
+            MediaInfo(path=Path(path), video_codec="h264")
+            if ".partial-" in Path(path).name else original_probe(path, ffmpeg)
+        ),
+    )
     monkeypatch.setattr(transcoder_module.os, "replace", fail_replace)
     with pytest.raises(PermissionError, match="locked destination"):
         transcoder.transcode(
@@ -154,6 +164,151 @@ def test_transcode_overwrite_replace_failure_preserves_existing_files(
             output_dir=output_dir, file_exists_action="overwrite",
         )
     assert target.read_bytes() == b"existing valid output fixture"
+    assert sample_video.read_bytes() == source_bytes
+    assert list(output_dir.iterdir()) == [target]
+
+
+def test_transcode_overwrite_cancellation_during_probe_preserves_existing_files(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "cancel-during-probe"
+    output_dir.mkdir()
+    target = output_dir / "sample_h264.mp4"
+    target.write_bytes(b"existing output")
+    source_bytes = sample_video.read_bytes()
+    cancel_event = Event()
+    transcoder = VideoTranscoder(ffmpeg_path, cancel_event=cancel_event)
+    original_probe = transcoder_module.probe_media
+
+    def probe_and_cancel(path: Path, ffmpeg: str) -> MediaInfo:
+        info = original_probe(path, ffmpeg)
+        if ".partial-" in Path(path).name:
+            cancel_event.set()
+        return info
+
+    monkeypatch.setattr(transcoder_module, "probe_media", probe_and_cancel)
+    with pytest.raises(TranscodeCancelled):
+        transcoder.transcode(
+            sample_video, VideoTranscodeOptions(mode="transcode", keep_original=False),
+            output_dir=output_dir, file_exists_action="overwrite",
+        )
+    assert target.read_bytes() == b"existing output"
+    assert sample_video.read_bytes() == source_bytes
+    assert list(output_dir.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("payload", [b"", b"not video data"])
+def test_transcode_overwrite_unrecognizable_output_preserves_existing_files(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    payload: bytes,
+) -> None:
+    output_dir = tmp_path / "invalid-probe"
+    output_dir.mkdir()
+    target = output_dir / "sample_h264.mp4"
+    target.write_bytes(b"existing output")
+    source_bytes = sample_video.read_bytes()
+    transcoder = VideoTranscoder(ffmpeg_path)
+
+    def write_invalid(command: list[str], _duration: float | None) -> str:
+        Path(command[-1]).write_bytes(payload)
+        return ""
+
+    monkeypatch.setattr(transcoder, "_run_ffmpeg", write_invalid)
+    with pytest.raises(RuntimeError, match="video|output file"):
+        transcoder.transcode(
+            sample_video, VideoTranscodeOptions(mode="transcode", keep_original=False),
+            output_dir=output_dir, file_exists_action="overwrite",
+        )
+    assert target.read_bytes() == b"existing output"
+    assert sample_video.read_bytes() == source_bytes
+    assert list(output_dir.iterdir()) == [target]
+
+
+def test_transcode_overwrite_cancel_after_commit_keeps_source(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "cancel-after-commit"
+    output_dir.mkdir()
+    target = output_dir / "sample_h264.mp4"
+    target.write_bytes(b"existing output")
+    source_bytes = sample_video.read_bytes()
+    cancel_event = Event()
+    messages: list[str] = []
+    transcoder = VideoTranscoder(ffmpeg_path, cancel_event=cancel_event, progress_callback=messages.append)
+    original_replace = transcoder_module.os.replace
+
+    def replace_and_cancel(source: Path, destination: Path) -> None:
+        original_replace(source, destination)
+        cancel_event.set()
+
+    monkeypatch.setattr(transcoder_module.os, "replace", replace_and_cancel)
+    result = transcoder.transcode(
+        sample_video, VideoTranscodeOptions(mode="transcode", keep_original=False),
+        output_dir=output_dir, file_exists_action="overwrite",
+    )
+    assert result.path == target and target.read_bytes() != b"existing output"
+    assert sample_video.read_bytes() == source_bytes
+    assert any("original file was retained" in message for message in messages)
+
+
+def test_transcode_overwrite_source_delete_failure_reports_retained_source(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "source-delete-failure"
+    output_dir.mkdir()
+    target = output_dir / "sample_h264.mp4"
+    target.write_bytes(b"existing output")
+    source_bytes = sample_video.read_bytes()
+    messages: list[str] = []
+    original_unlink = Path.unlink
+
+    def fail_source_unlink(path: Path, *args, **kwargs) -> None:
+        if path == sample_video:
+            raise PermissionError("simulated locked source")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_source_unlink)
+    result = VideoTranscoder(ffmpeg_path, progress_callback=messages.append).transcode(
+        sample_video, VideoTranscodeOptions(mode="transcode", keep_original=False),
+        output_dir=output_dir, file_exists_action="overwrite",
+    )
+    assert result.path == target and target.read_bytes() != b"existing output"
+    assert sample_video.read_bytes() == source_bytes
+    assert any("original file was retained" in message for message in messages)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows sharing semantics")
+def test_transcode_overwrite_real_windows_lock_preserves_files(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path,
+) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    output_dir = tmp_path / "locked-output"
+    output_dir.mkdir()
+    target = output_dir / "sample_h264.mp4"
+    target.write_bytes(b"existing output")
+    source_bytes = sample_video.read_bytes()
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.CreateFileW(str(target), 0x80000000, 0, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        with pytest.raises(PermissionError):
+            VideoTranscoder(ffmpeg_path).transcode(
+                sample_video, VideoTranscodeOptions(mode="transcode", keep_original=False),
+                output_dir=output_dir, file_exists_action="overwrite",
+            )
+    finally:
+        assert kernel32.CloseHandle(handle)
+    assert target.read_bytes() == b"existing output"
     assert sample_video.read_bytes() == source_bytes
     assert list(output_dir.iterdir()) == [target]
 
