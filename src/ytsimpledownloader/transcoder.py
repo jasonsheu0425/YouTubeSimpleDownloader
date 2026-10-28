@@ -338,8 +338,16 @@ class VideoTranscoder:
             if not partial_path.is_file() or partial_path.stat().st_size == 0:
                 raise RuntimeError(stderr_tail or "FFmpeg did not create an output file.")
             info = probe_media(partial_path, self.ffmpeg_path)
+            if self.cancel_event and self.cancel_event.is_set():
+                raise TranscodeCancelled("Transcode cancelled by user.")
             if not info.video_codec:
                 raise RuntimeError(f"Could not verify output video: {info.error or 'no video stream found'}")
+            self._emit("Verifying transcoded output...")
+            self._run_ffmpeg(
+                [self.ffmpeg_path, "-hide_banner", "-v", "error", "-xerror", "-i", str(partial_path),
+                 "-map", "0:v:0", "-map", "0:a?", "-progress", "pipe:1", "-nostats", "-f", "null", "-"],
+                info.duration,
+            )
             if self.cancel_event and self.cancel_event.is_set():
                 raise TranscodeCancelled("Transcode cancelled by user.")
             os.replace(partial_path, output_path)
