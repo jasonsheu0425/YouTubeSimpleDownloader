@@ -294,6 +294,9 @@ class VideoTranscoder:
             validate_against_duration(time_range, duration_seconds)
             return self._transcode_local_clip(source, output_path, options, time_range)
 
+        if file_exists_action == "overwrite":
+            return self._transcode_overwrite(source, output_path, options, source_info)
+
         command = self.build_command(source, output_path, options)
         self._emit(f"Transcoding: {source.name}")
         stderr_tail = self._run_ffmpeg(command, source_info.duration)
@@ -311,6 +314,58 @@ class VideoTranscoder:
             source.unlink()
 
         info = probe_media(output_path, self.ffmpeg_path)
+        self._emit(f"Transcoded: {output_path}")
+        if info.error:
+            self._emit(f"Media info note: {info.error}")
+        self._emit(f"Media info: {info.summary()}")
+        return TranscodeResult(output_path, source, info)
+
+    def _transcode_overwrite(
+        self,
+        source: Path,
+        output_path: Path,
+        options: VideoTranscodeOptions,
+        source_info: MediaInfo,
+    ) -> TranscodeResult:
+        partial_path = self._create_local_clip_partial_path(output_path)
+        finalized = False
+        try:
+            command = self.build_command(source, partial_path, options)
+            self._emit(f"Transcoding: {source.name}")
+            stderr_tail = self._run_ffmpeg(command, source_info.duration)
+            if self.cancel_event and self.cancel_event.is_set():
+                raise TranscodeCancelled("Transcode cancelled by user.")
+            if not partial_path.is_file() or partial_path.stat().st_size == 0:
+                raise RuntimeError(stderr_tail or "FFmpeg did not create an output file.")
+            info = probe_media(partial_path, self.ffmpeg_path)
+            if self.cancel_event and self.cancel_event.is_set():
+                raise TranscodeCancelled("Transcode cancelled by user.")
+            if not info.video_codec:
+                raise RuntimeError(f"Could not verify output video: {info.error or 'no video stream found'}")
+            self._emit("Verifying transcoded output...")
+            self._run_ffmpeg(
+                [self.ffmpeg_path, "-hide_banner", "-v", "error", "-xerror", "-i", str(partial_path),
+                 "-map", "0:v:0", "-map", "0:a?", "-progress", "pipe:1", "-nostats", "-f", "null", "-"],
+                info.duration,
+            )
+            if self.cancel_event and self.cancel_event.is_set():
+                raise TranscodeCancelled("Transcode cancelled by user.")
+            os.replace(partial_path, output_path)
+            finalized = True
+        finally:
+            if not finalized:
+                self._remove_owned_partial(partial_path)
+
+        if not options.keep_original and source.exists() and source.resolve() != output_path.resolve():
+            if self.cancel_event and self.cancel_event.is_set():
+                self._emit("Cancellation observed after output was committed; original file was retained.")
+            else:
+                try:
+                    source.unlink()
+                except OSError as exc:
+                    self._emit(f"Warning: output was committed but original file was retained: {exc}")
+
+        info = replace(info, path=output_path)
         self._emit(f"Transcoded: {output_path}")
         if info.error:
             self._emit(f"Media info note: {info.error}")
@@ -415,7 +470,6 @@ class VideoTranscoder:
         if file_exists_action == "skip":
             return target, True
         if file_exists_action == "overwrite":
-            target.unlink()
             return target, False
         return _numbered_path(target), False
 
