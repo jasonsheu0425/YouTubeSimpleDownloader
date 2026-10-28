@@ -6,8 +6,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from yt_dlp import YoutubeDL
 
 import ytsimpledownloader.transcoder as transcoder_module
+from ytsimpledownloader.downloader import SingleVideoDownloader
 from ytsimpledownloader.media_probe import MediaInfo, probe_media
 from ytsimpledownloader.transcoder import (
     TranscodeCancelled,
@@ -57,6 +59,46 @@ def sample_video(tmp_path: Path, ffmpeg_path: str) -> Path:
     ]
     subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return target
+
+
+@pytest.mark.parametrize("mode", ["mp3", "mp4"])
+def test_local_yt_dlp_output_identity(
+    sample_video: Path, ffmpeg_path: str, tmp_path: Path, mode: str,
+) -> None:
+    output_dir = tmp_path / "local-yt-dlp-output"
+    output_dir.mkdir()
+    downloader = object.__new__(SingleVideoDownloader)
+    downloader.output_dir = output_dir
+    downloader.audio_format = "mp3"
+    downloader.mp3_quality = "192"
+    downloader.embed_audio_thumbnail = False
+    downloader.video_format = "mp4"
+    downloader.mp4_quality = "best"
+    downloader.video_processing_options = VideoTranscodeOptions()
+    options = {
+        "enable_file_urls": True,
+        "outtmpl": str(output_dir / "output.%(ext)s"),
+        "ffmpeg_location": ffmpeg_path,
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+    }
+    if mode == "mp3":
+        options.update(downloader._audio_options())
+    else:
+        options.update({"format": downloader._video_format_selector(), "merge_output_format": "mp4"})
+
+    with YoutubeDL(options) as ydl:
+        info = ydl.extract_info(sample_video.as_uri(), download=True)
+
+    expected = output_dir / f"output.{mode}"
+    output = downloader._expected_path(info, f".{mode}", expected)
+    assert output == expected
+    assert output.is_file() and output.stat().st_size > 0
+    subprocess.run(
+        [ffmpeg_path, "-v", "error", "-i", str(output), "-f", "null", "-"],
+        check=True, capture_output=True, timeout=30,
+    )
 
 
 def test_probe_reads_basic_media_info(sample_video: Path, ffmpeg_path: str) -> None:

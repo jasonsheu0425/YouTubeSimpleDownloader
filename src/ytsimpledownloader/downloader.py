@@ -534,19 +534,14 @@ class SingleVideoDownloader:
             if filepath and Path(filepath).suffix.lower() == suffix:
                 path = Path(filepath)
                 self._require_contained_output_path(path)
-                return path
-
-        if target_path.exists():
-            self._require_contained_output_path(target_path)
-            return target_path
-
-        matches = sorted(target_path.parent.glob(f"*{suffix}"), key=lambda item: item.stat().st_mtime, reverse=True)
-        if matches:
-            self._require_contained_output_path(matches[0])
-            return matches[0]
+                if path.resolve() == target_path.resolve() and path.is_file():
+                    return path
 
         self._require_contained_output_path(target_path)
-        return target_path
+        if target_path.is_file():
+            return target_path
+
+        raise FileNotFoundError(f"Download completed without an identifiable output file: {target_path}")
 
     def _info_with_context(self, info: dict, playlist_title: str, playlist_index: int | None) -> dict:
         prepared = dict(info)

@@ -134,6 +134,7 @@ def test_trim_range_is_applied_to_each_mode_download(
     class FakeYoutubeDL:
         def __init__(self, options: dict) -> None:
             captured_options.append(options)
+            self.options = options
 
         def __enter__(self):
             return self
@@ -143,7 +144,14 @@ def test_trim_range_is_applied_to_each_mode_download(
 
         def extract_info(self, _url: str, download: bool) -> dict:
             assert download is True
-            return {}
+            postprocessors = self.options.get("postprocessors") or []
+            extension = (
+                postprocessors[0]["preferredcodec"]
+                if postprocessors else self.options["merge_output_format"]
+            )
+            output = Path(self.options["outtmpl"].replace("%(ext)s", extension))
+            output.write_bytes(b"simulated download output")
+            return {"requested_downloads": [{"filepath": str(output)}]}
 
     downloader = downloader_factory(time_range=TimeRange(30, 90))
     monkeypatch.setattr(downloader_module, "YoutubeDL", FakeYoutubeDL)
@@ -157,6 +165,7 @@ def test_trim_range_is_applied_to_each_mode_download(
     results = downloader.download(VALID_URL, mode)  # type: ignore[arg-type]
 
     assert len(results) == expected_downloads
+    assert all(result.path.is_file() for result in results)
     assert len(captured_options) == expected_downloads
     assert all("download_ranges" in options for options in captured_options)
     assert all(options["force_keyframes_at_cuts"] is True for options in captured_options)
