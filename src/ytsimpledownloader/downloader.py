@@ -534,7 +534,7 @@ class SingleVideoDownloader:
             if filepath and Path(filepath).suffix.lower() == suffix:
                 path = Path(filepath)
                 self._require_contained_output_path(path)
-                if path.is_file():
+                if path.resolve() == target_path.resolve() and path.is_file():
                     return path
 
         self._require_contained_output_path(target_path)
